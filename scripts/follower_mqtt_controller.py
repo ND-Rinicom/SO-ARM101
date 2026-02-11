@@ -126,9 +126,9 @@ class FollowerSafetyController:
             self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
             
         except json.JSONDecodeError:
-            logger.error(f"❌ Failed to parse JSON: {msg.payload}")
+            logger.error(f"Failed to parse JSON: {msg.payload}")
         except Exception as e:
-            logger.error(f"❌ Error processing message: {e}")
+            logger.error(f"Error processing message: {e}")
     
     def start(self):
         """Start the follower controller"""

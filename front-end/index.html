@@ -1,0 +1,90 @@
+<!-- 
+index.html
+Has URL parameters to configure model and positions
+- model:              3D model filename (default: so-101.glb)
+- xPos, yPos, zPos:   Model position coordinates (default: 0.0,0.0,0.0)
+- cameraZPos:         Camera Z position (default: 7.0) 
+- wireframe:          Render mode (0 = ghost, 1 = wireframe) (default: 0)
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Robot Arm</title>
+    <style>
+      body { margin: 0; }
+      /* background: black; */
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@v0.182.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.182.0/examples/jsm/"
+        }
+    }
+    </script>
+  </head>
+  <body>
+    <script src="js/mqtt/mqtt.min.js"></script>
+	  <script src="js/mqtt/jsonrpcovermqtt.js"></script>
+    <script type="module">
+    import { loadModel, setJointAngles, setCameraPosition, setModelPosition, setRenderMode } from '/js/3Dmodels.js';
+
+// Extract parameters from URL
+const url = new URL(window.location.href);
+const urlParams = new URLSearchParams(url.search);
+
+// Model name
+let modelName = 'so-101.glb'; // default
+if (urlParams.has('model')) {
+  modelName = urlParams.get('model');
+  if (!modelName.endsWith('.glb')) {
+    modelName = modelName + '.glb';
+  }
+}
+// Model position (xPos, yPos, zPos)
+const xPos = urlParams.has('xPos') ? parseFloat(urlParams.get('xPos')) : 0;
+const yPos = urlParams.has('yPos') ? parseFloat(urlParams.get('yPos')) : 0;
+const zPos = urlParams.has('zPos') ? parseFloat(urlParams.get('zPos')) : 0;
+
+// Camera Z position
+const cameraZPos = urlParams.has('cameraZPos') ? parseFloat(urlParams.get('cameraZPos')) : 1;
+
+// Render mode: wireframe or ghost
+const renderModeParam = urlParams.get('wireframe') || 0;
+
+// Apply settings
+setCameraPosition(cameraZPos);
+setModelPosition(xPos, yPos, zPos);
+setRenderMode(renderModeParam == 1);
+
+// Load model and only initialize MQTT if successful
+loadModel('./models/' + modelName).then(modelLoaded => {
+  if (!modelLoaded) {
+    console.warn('Model failed to load, skipping MQTT initialization');
+    return;
+  }
+
+  const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName.slice(0, -4));
+
+  // Handle inbound method calls (server -> client)
+  jsonRpcService.onMethodCalled = function(topic, message) {
+    const method = message.method;
+
+    if (method === "finger") {
+      jsonRpcService.sendMessage('watchman_robotarm', {
+        jsonrpc: "2.0",
+        id: message.id,
+        result: jsonRpcService.clientId
+      });
+    } else if (method === "set_joint_angles") {
+      const joints = message.params?.joints || {};
+      setJointAngles(joints);
+      return;
+    }
+  };
+});
+    </script>
+  </body>
+</html>
