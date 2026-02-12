@@ -213,7 +213,12 @@ function setJointAngles(jointAngles) {
       }
       
       // Get the angle value
-      const angle = jointAngles[jointName];
+      let angle = jointAngles[jointName];
+      
+      // Special handling for gripper: convert from 0-100 normalized to 0 to -127 degrees
+      if (cleanName === "gripper") {
+        angle = -(angle / 100) * 127;  // 0 -> 0°, 100 -> -127°
+      }
       
       // Set the rotation
       setRotation(cleanName, axis, angle);
