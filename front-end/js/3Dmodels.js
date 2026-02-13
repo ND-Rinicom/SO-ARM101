@@ -196,7 +196,7 @@ function setJointAngles(jointAngles) {
       const axes = jointAngles[jointName];
       for (const axis in axes) {
         setRotation(jointName, axis, axes[axis]);
-        console.log(`Set joint ${jointName} axis ${axis} to ${axes[axis]} degrees`);
+        //console.log(`Set joint ${jointName} axis ${axis} to ${axes[axis]} degrees`);
       }
     }
   } else {
@@ -218,7 +218,7 @@ function setJointAngles(jointAngles) {
       // Special handling for gripper: convert from 0-100 normalized to 0 to -127 degrees
       if (cleanName === "gripper") {
         angle = -((angle / 100) * 127);  // 0 -> 0°, 100 -> 127°
-        console.log(`Converted gripper angle to ${angle} degrees`);
+        //console.log(`Converted gripper angle to ${angle} degrees`);
       }
       else if (cleanName === "wrist_roll") {
         angle = -angle;
@@ -226,7 +226,7 @@ function setJointAngles(jointAngles) {
       
       // Set the rotation
       setRotation(cleanName, axis, angle);
-      console.log(`Set joint ${cleanName} axis ${axis} to ${angle} degrees`);
+      //console.log(`Set joint ${cleanName} axis ${axis} to ${angle} degrees`);
     }
   }
   
@@ -310,9 +310,12 @@ function setLighting(color = 0xffffff, intensity = 3, x = -1, y = 2, z = 4) {
   light.position.set(x, y, z);
 }
 
-// Set camera Z position
-function setCameraPosition(zPos = 1) {
-  camera.position.z = zPos;
+// Set camera position (x, y, z) and keep focus on model center
+function setCameraPosition(x = 0, y = 0, z = 1) {
+  camera.position.set(x, y, z);
+  light.position.set(x, y, z);
+  camera.lookAt(modelPositionOffset.x, modelPositionOffset.y, modelPositionOffset.z);
+  renderer.render(scene, camera);
 }
 
 // Export what your HTML needs

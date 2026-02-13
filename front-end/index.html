@@ -52,11 +52,36 @@ const zPos = urlParams.has('zPos') ? parseFloat(urlParams.get('zPos')) : 0;
 // Camera Z position
 const cameraZPos = urlParams.has('cameraZPos') ? parseFloat(urlParams.get('cameraZPos')) : 1;
 
+// Basic mouse orbit controls around the model
+const cameraState = {
+  radius: cameraZPos,
+  theta: Math.PI / 2,
+  phi: Math.PI / 3,
+  isDragging: false,
+  lastX: 0,
+  lastY: 0
+};
+
+function applyCameraOrbit() {
+  const x = cameraState.radius * Math.sin(cameraState.phi) * Math.cos(cameraState.theta);
+  const y = cameraState.radius * Math.cos(cameraState.phi);
+  const z = cameraState.radius * Math.sin(cameraState.phi) * Math.sin(cameraState.theta);
+  setCameraPosition(x, y, z);
+}
+
+function applyCameraState(state) {
+  if (typeof state.radius === 'number') cameraState.radius = state.radius;
+  if (typeof state.theta === 'number') cameraState.theta = state.theta;
+  if (typeof state.phi === 'number') cameraState.phi = state.phi;
+  cameraState.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.phi));
+  applyCameraOrbit();
+}
+
 // Render mode: wireframe or ghost
 const renderModeParam = urlParams.get('wireframe') || 0;
 
 // Apply settings
-setCameraPosition(cameraZPos);
+applyCameraOrbit();
 setModelPosition(xPos, yPos, zPos);
 setRenderMode(renderModeParam == 1);
 
@@ -68,6 +93,50 @@ loadModel('./models/' + modelName).then(modelLoaded => {
   }
 
   const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName);
+
+  let lastCameraSend = 0;
+  function sendCameraUpdate() {
+    if (!jsonRpcService || !jsonRpcService.clientId) return;
+    const now = Date.now();
+    if (now - lastCameraSend < 50) return;
+    lastCameraSend = now;
+
+    jsonRpcService.sendMessage('watchman_robotarm/' + modelName, {
+      jsonrpc: "2.0",
+      method: "change-camera",
+      params: {
+        clientId: jsonRpcService.clientId,
+        radius: cameraState.radius,
+        theta: cameraState.theta,
+        phi: cameraState.phi
+      }
+    });
+  }
+
+  // Mouse controls (click and drag)
+  window.addEventListener('mousedown', (event) => {
+    cameraState.isDragging = true;
+    cameraState.lastX = event.clientX;
+    cameraState.lastY = event.clientY;
+  });
+
+  window.addEventListener('mouseup', () => {
+    cameraState.isDragging = false;
+  });
+
+  window.addEventListener('mousemove', (event) => {
+    if (!cameraState.isDragging) return;
+    const deltaX = event.clientX - cameraState.lastX;
+    const deltaY = event.clientY - cameraState.lastY;
+    cameraState.lastX = event.clientX;
+    cameraState.lastY = event.clientY;
+
+    cameraState.theta -= deltaX * 0.005;
+    cameraState.phi -= deltaY * 0.005;
+    cameraState.phi = Math.max(0.1, Math.min(Math.PI - 0.1, cameraState.phi));
+    applyCameraOrbit();
+    sendCameraUpdate();
+  });
 
   // Handle inbound method calls (server -> client)
   jsonRpcService.onMethodCalled = function(topic, message) {
@@ -82,6 +151,19 @@ loadModel('./models/' + modelName).then(modelLoaded => {
     } else if (method === "set_joint_angles") {
       const joints = message.params?.joints || {};
       setJointAngles(joints);
+      return;
+    } else if (method === "change-camera") {
+      console.log('Received camera update message:', message);
+      const params = message.params || {};
+      if (params.clientId && params.clientId === jsonRpcService.clientId) {
+        console.log('Received camera update from self, ignoring');
+        return;
+      }
+      applyCameraState({
+        radius: params.radius,
+        theta: params.theta,
+        phi: params.phi
+      });
       return;
     }
   };

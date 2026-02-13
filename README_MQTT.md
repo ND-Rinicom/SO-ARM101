@@ -225,6 +225,8 @@ The `.pos` suffix is automatically stripped by the follower before applying join
 # start video 
 
 on pi 
-```bash
-ffmpeg -f v4l2 -framerate 10 -video_size 1280x720 -i /dev/video0   -an -c:v libx264 -preset veryfast -tune zerolatency -pix_fmt yuv420p   -g 20 -keyint_min 20 -sc_threshold 0   -f rtsp -rtsp_transport tcp rtsp://192.168.1.107:8554/cam
-```
+
+./scripts/follower_mqtt_controller.py --camera /dev/video0
+
+host from pi 
+python3 -m http.server 8001 --directory ~

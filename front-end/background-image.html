@@ -1,0 +1,93 @@
+<!-- 
+background-image.html
+Has URL parameter to set background image
+- image:   background image filename (default: table.png) 
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Background Image</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+        
+        body, html {
+            width: 100%;
+            height: 100%;
+        }
+        
+        img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <img id="backgroundImage" src="./backgrounds/table.png" alt="Background">
+    <canvas id="circleCanvas"></canvas>
+    <script>
+        // Extract image parameter from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const imageName = urlParams.get('image') || 'table.png';
+        document.getElementById('backgroundImage').src = './backgrounds/' + imageName;
+        
+        // Canvas setup for circle
+        const canvas = document.getElementById('circleCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', resizeCanvas);
+        
+        // Circle animation
+        const colors = ['#ff0000', '#00ff00', '#0000ff']; // red, green, blue
+        let colorIndex = 0;
+        let progress = 0;
+        
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw circle in top left
+            const radius = 10;
+            const centerX = radius/2;
+            const centerY = radius/2;
+            
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+            ctx.fillStyle = colors[colorIndex];
+            ctx.fill();
+            
+            // Cycle through colors
+            progress += 0.02;
+            if (progress >= 1) {
+                progress = 0;
+                colorIndex = (colorIndex + 1) % colors.length;
+            }
+            
+            requestAnimationFrame(animate);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>
