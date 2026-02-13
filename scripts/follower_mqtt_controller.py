@@ -90,15 +90,27 @@ class FollowerSafetyController:
         """
         Called when MQTT target position arrives.
         Applies jump protection and sends safe command to servos.
+        
+        Expects JSON-RPC format: {"method": "set_joint_angles", "id": "...", "params": {"units": "degrees", "joints": {...}}}
         """
         try:
-            # Parse target action
-            target_action = json.loads(msg.payload.decode())
+            # Parse incoming message
+            message = json.loads(msg.payload.decode())
+            
+            # Validate JSON-RPC format
+            method = message.get("method")
+            if method != "set_joint_angles":
+                logger.warning(f"Unknown method: {method}, skipping")
+                return
+            
+            params = message.get("params", {})
+            joints = params.get("joints", {})
+            # units = params.get("units", "degrees")  # Could use this for conversion
             
             # Extract goal positions (remove .pos suffix)
             goal_pos = {
                 key.removesuffix(".pos"): val 
-                for key, val in target_action.items() 
+                for key, val in joints.items() 
                 if key.endswith(".pos")
             }
             

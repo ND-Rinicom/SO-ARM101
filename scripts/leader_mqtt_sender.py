@@ -8,6 +8,8 @@ import json
 import logging
 import sys
 import time
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent directory to path to import lerobot
@@ -122,7 +124,18 @@ class LeaderMQTTSender:
                 
                 # Send via MQTT (only if connected)
                 if self.is_connected:
-                    payload = json.dumps(action)
+                    # Format as JSON-RPC message
+                    message = {
+                        "jsonrpc": "2.0",
+                        "id": str(uuid.uuid4()),
+                        "method": "set_joint_angles",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "params": {
+                            "units": "degrees" if self.leader.config.use_degrees else "normalized",
+                            "joints": action
+                        }
+                    }
+                    payload = json.dumps(message)
                     self.mqtt_client.publish(self.mqtt_topic, payload)
                 else:
                     logger.warning("Not connected to MQTT, skipping send")
@@ -159,7 +172,7 @@ def main():
     MQTT_PORT = 1883                            # MQTT broker port
     MQTT_TOPIC = "watchman_robotarm/so-101"     # MQTT topic to publish to
     FPS = 60                                    # Control loop frequency
-    USE_DEGREES = True                         # Use degrees or normalized range
+    USE_DEGREES = True                          # Use degrees or normalized range
     
     # Create and start sender
     sender = LeaderMQTTSender(

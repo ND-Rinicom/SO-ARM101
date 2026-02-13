@@ -217,7 +217,11 @@ function setJointAngles(jointAngles) {
       
       // Special handling for gripper: convert from 0-100 normalized to 0 to -127 degrees
       if (cleanName === "gripper") {
-        angle = -(angle / 100) * 127;  // 0 -> 0°, 100 -> -127°
+        angle = -((angle / 100) * 127);  // 0 -> 0°, 100 -> 127°
+        console.log(`Converted gripper angle to ${angle} degrees`);
+      }
+      else if (cleanName === "wrist_roll") {
+        angle = -angle;
       }
       
       // Set the rotation
