@@ -31,7 +31,7 @@ python --version
 On both PC and Raspberry Pi (with venv activated):
 
 ```bash
-pip install paho-mqtt feetech-servo-sdk pyserial deepdiff tqdm numpy huggingface-hub
+pip install paho-mqtt feetech-servo-sdk pyserial numpy
 ```
 
 ### 3. Transfer to Raspberry Pi
@@ -103,7 +103,6 @@ FPS = 60                                  # Control loop frequency
 ### 1. Start Follower Controller (on Raspberry Pi)
 
 ```bash
-cd /home/nialldorrington/Documents/SO-ARM101
 python scripts/follower_mqtt_controller.py
 ```
 
@@ -117,7 +116,6 @@ Follower controller started. Waiting for targets...
 ### 2. Start Leader Sender (on PC)
 
 ```bash
-cd /home/nialldorrington/Documents/SO-ARM101
 python scripts/leader_mqtt_sender.py
 ```
 

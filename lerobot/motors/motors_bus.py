@@ -31,8 +31,6 @@ from pprint import pformat
 from typing import Protocol, TypeAlias
 
 import serial
-from deepdiff import DeepDiff
-from tqdm import tqdm
 
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 from lerobot.utils.utils import enter_pressed, move_cursor_up
@@ -372,7 +370,7 @@ class SerialMotorsBus(MotorsBusBase):
 
         first_table = self.model_ctrl_table[self.models[0]]
         return any(
-            DeepDiff(first_table, get_ctrl_table(self.model_ctrl_table, model)) for model in self.models[1:]
+            first_table != get_ctrl_table(self.model_ctrl_table, model) for model in self.models[1:]
         )
 
     @cached_property
@@ -554,11 +552,11 @@ class SerialMotorsBus(MotorsBusBase):
         bus = cls(port, {}, *args, **kwargs)
         bus._connect(handshake=False)
         baudrate_ids = {}
-        for baudrate in tqdm(bus.available_baudrates, desc="Scanning port"):
+        for baudrate in bus.available_baudrates:
             bus.set_baudrate(baudrate)
             ids_models = bus.broadcast_ping()
             if ids_models:
-                tqdm.write(f"Motors found for {baudrate=}: {pformat(ids_models, indent=4)}")
+                logger.info("Motors found for %s: %s", baudrate, pformat(ids_models, indent=4))
                 baudrate_ids[baudrate] = list(ids_models)
 
         bus.port_handler.closePort()
