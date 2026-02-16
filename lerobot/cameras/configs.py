@@ -18,8 +18,6 @@ import abc
 from dataclasses import dataclass
 from enum import Enum
 
-import draccus  # type: ignore  # TODO: add type stubs for draccus
-
 
 class ColorMode(str, Enum):
     RGB = "rgb"
@@ -34,11 +32,8 @@ class Cv2Rotation(int, Enum):
 
 
 @dataclass(kw_only=True)
-class CameraConfig(draccus.ChoiceRegistry, abc.ABC):  # type: ignore  # TODO: add type stubs for draccus
+class CameraConfig(abc.ABC):
+    type: str  # Camera type (e.g., "opencv", "intelrealsense", etc.)
     fps: int | None = None
     width: int | None = None
     height: int | None = None
-
-    @property
-    def type(self) -> str:
-        return str(self.get_choice_name(self.__class__))

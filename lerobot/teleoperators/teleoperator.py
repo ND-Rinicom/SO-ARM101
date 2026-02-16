@@ -17,10 +17,8 @@ import builtins
 from pathlib import Path
 from typing import Any, Union
 
-import draccus
-
 from lerobot.motors.motors_bus import MotorCalibration
-from lerobot.processor import RobotAction
+from lerobot.types import RobotAction
 from lerobot.utils.constants import HF_LEROBOT_CALIBRATION, TELEOPERATORS
 
 from .config import TeleoperatorConfig

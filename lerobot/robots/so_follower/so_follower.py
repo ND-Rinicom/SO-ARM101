@@ -25,11 +25,10 @@ from lerobot.motors.feetech import (
     FeetechMotorsBus,
     OperatingMode,
 )
-from lerobot.processor import RobotAction, RobotObservation
+from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
 
-from ..robot import Robot
-from ..utils import ensure_safe_goal_position
+from ..robot import Robot, ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
 logger = logging.getLogger(__name__)

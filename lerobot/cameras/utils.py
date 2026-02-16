@@ -15,9 +15,6 @@
 # limitations under the License.
 
 import platform
-from typing import cast
-
-from lerobot.utils.import_utils import make_device_from_device_class
 
 from .camera import Camera
 from .configs import CameraConfig, Cv2Rotation
@@ -27,7 +24,6 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
     cameras: dict[str, Camera] = {}
 
     for key, cfg in camera_configs.items():
-        # TODO(Steven): Consider just using the make_device_from_device_class for all types
         if cfg.type == "opencv":
             from .opencv import OpenCVCamera
 
@@ -49,10 +45,7 @@ def make_cameras_from_configs(camera_configs: dict[str, CameraConfig]) -> dict[s
             cameras[key] = ZMQCamera(cfg)
 
         else:
-            try:
-                cameras[key] = cast(Camera, make_device_from_device_class(cfg))
-            except Exception as e:
-                raise ValueError(f"Error creating camera {key} with config {cfg}: {e}") from e
+            raise ValueError(f"Unknown camera type '{cfg.type}' for camera '{key}'")
 
     return cameras
 

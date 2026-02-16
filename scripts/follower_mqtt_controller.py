@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import paho.mqtt.client as mqtt
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
-from lerobot.robots.utils import ensure_safe_goal_position
+from lerobot.robots.robot import ensure_safe_goal_position
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

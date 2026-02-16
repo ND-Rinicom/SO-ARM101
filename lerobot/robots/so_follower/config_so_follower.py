@@ -43,8 +43,6 @@ class SOFollowerConfig:
     use_degrees: bool = False
 
 
-@RobotConfig.register_subclass("so101_follower")
-@RobotConfig.register_subclass("so100_follower")
 @dataclass
 class SOFollowerRobotConfig(RobotConfig, SOFollowerConfig):
     pass

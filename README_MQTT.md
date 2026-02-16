@@ -26,25 +26,21 @@ source ~/lerobot-venv/bin/activate
 python --version
 ```
 
-To deactivate later: `deactivate`
-
 ### 2. Install Dependencies
 
 On both PC and Raspberry Pi (with venv activated):
 
 ```bash
-pip install paho-mqtt feetech-servo-sdk pyserial draccus deepdiff tqdm numpy huggingface-hub
+pip install paho-mqtt feetech-servo-sdk pyserial deepdiff tqdm numpy huggingface-hub
 ```
 
-**Note:** `torch`, `accelerate`, and `datasets` are optional and not required for MQTT control.
-
-### 3. Transfer to Raspberry Pi (if needed)
+### 3. Transfer to Raspberry Pi
 
 Copy the project from PC to Raspberry Pi:
 
 ```bash
 # From your PC:
-scp -r /home/nialldorrington/Documents/SO-ARM101 so-101@<PI_IP_ADDRESS>:~/Documents/
+scp -r /<PROJECT_PATH>/SO-ARM101 <PI_USERNAME>@<PI_IP_ADDRESS>:~/SO-ARM101
 ```
 
 ### 4. Find Serial Port
@@ -52,23 +48,7 @@ scp -r /home/nialldorrington/Documents/SO-ARM101 so-101@<PI_IP_ADDRESS>:~/Docume
 Before calibrating, identify which port your SO-ARM is connected to:
 
 **Linux (PC and Raspberry Pi):**
-```bash
-# List all serial devices
-ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null
-
-# Or use Python to list ports
-python -m serial.tools.list_ports
-
-# Watch for new devices when plugging in the arm
-dmesg | grep -i tty | tail
-```
-
-**Common port names:**
-- `/dev/ttyACM0` - Most common for SO-ARM
-- `/dev/ttyUSB0` - If using USB-to-serial adapter
-- `/dev/ttyACM1` - If multiple devices connected
-
-**Tip:** Unplug the arm, run `ls /dev/ttyACM*`, then plug it back in and run the command again to see which device appears.
+Unplug the arm, run `ls /dev/ttyACM*`, then plug it back in and run the command again to see which device appears.
 
 ### 5. Calibrate Your Arms
 
@@ -86,7 +66,7 @@ l = SO101Leader(SO101LeaderConfig(port='/dev/ttyACM0', id='so_leader')); \
 l.connect(); l.calibrate()"
 ```
 
-This creates calibration files in `~/.cache/calibration/`.
+This creates calibration files in `lerobot/calibrations/`.
 
 ### 6. Setup MQTT Broker
 

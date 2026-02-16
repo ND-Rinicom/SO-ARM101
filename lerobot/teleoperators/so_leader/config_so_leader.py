@@ -31,8 +31,6 @@ class SOLeaderConfig:
     use_degrees: bool = False
 
 
-@TeleoperatorConfig.register_subclass("so101_leader")
-@TeleoperatorConfig.register_subclass("so100_leader")
 @dataclass
 class SOLeaderTeleopConfig(TeleoperatorConfig, SOLeaderConfig):
     pass
