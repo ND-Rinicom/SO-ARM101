@@ -28,8 +28,6 @@ function getZoomScale(radius, config) {
   return clamp(radius / config.scaleAtRadius, config.minScale, config.maxScale);
 }
 
-
-
 export function initCameraControls({
   jsonRpcService,
   modelName,

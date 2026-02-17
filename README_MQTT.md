@@ -212,12 +212,3 @@ All messages use JSON-RPC 2.0 format:
 ```
 
 The `.pos` suffix is automatically stripped by the follower before applying joint angles.
-
-# start video 
-
-on pi 
-
-./scripts/follower_mqtt_controller.py --camera /dev/video0
-
-host from pi 
-python3 -m http.server 8001 --directory ~
