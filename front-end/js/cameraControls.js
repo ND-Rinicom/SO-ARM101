@@ -122,22 +122,17 @@ export function initCameraControls({
 
   controls.addEventListener("change", onControlsChange);
 
-  let mouseButtonDown = null;
-
   renderer.domElement.addEventListener("mousedown", (event) => {
     if (event.button === 0) {
-      mouseButtonDown = "rotate";
       renderer.domElement.classList.add("rotating");
       renderer.domElement.classList.remove("panning", "zooming");
     } else if (event.button === 2) {
-      mouseButtonDown = "pan";
       renderer.domElement.classList.add("panning");
       renderer.domElement.classList.remove("rotating", "zooming");
     }
   });
 
   renderer.domElement.addEventListener("mouseup", () => {
-    mouseButtonDown = null;
     renderer.domElement.classList.remove("rotating", "panning", "zooming");
   });
 

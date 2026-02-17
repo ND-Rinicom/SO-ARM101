@@ -324,16 +324,6 @@ function setCameraTarget(x = 0, y = 0, z = 0, render = true) {
   }
 }
 
-// Set camera position (x, y, z) and keep focus on model center
-function setCameraPosition(x = 0, y = 0, z = 1, render = true) {
-  camera.position.set(x, y, z);
-  light.position.set(x, y, z);
-  camera.lookAt(cameraTarget);
-  if (render) {
-    renderScene();
-  }
-}
-
 function setCameraPose(x = 0, y = 0, z = 1, targetX = 0, targetY = 0, targetZ = 0) {
   cameraTarget.set(targetX, targetY, targetZ);
   camera.position.set(x, y, z);
@@ -348,7 +338,6 @@ export {
   loadJointConfig,
   setJointAngles,
   setRenderMode,
-  setCameraPosition,
   setCameraTarget,
   setCameraPose,
   setModelPosition,
