@@ -36,7 +36,7 @@ class LeaderMQTTSender:
         mqtt_broker: str = "192.168.1.107",
         mqtt_port: int = 1883,
         mqtt_topic: str = "watchman_robotarm/so-101",
-        fps: int = 60,
+        fps: int = 30,
         use_degrees: bool = True,
     ):
         """
@@ -68,6 +68,12 @@ class LeaderMQTTSender:
         self.fps = fps
         self.is_running = False
         self.is_connected = False
+
+        # Measure packets
+        self.packet_count = 0
+        self.total_bytes = 0
+        self.last_report_time = time.time()
+
         
     def _on_connect(self, client, userdata, flags, rc):
         """Called when MQTT connection is established"""
@@ -129,15 +135,31 @@ class LeaderMQTTSender:
                     message = {
                         "jsonrpc": "2.0",
                         "id": str(uuid.uuid4()),
-                        "method": "set_joint_angles",
+                        "method": "set_leader_joint_angles",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "params": {
                             "units": "degrees" if self.leader.config.use_degrees else "normalized",
                             "joints": action
                         }
                     }
-                    payload = json.dumps(message)
+                    payload = json.dumps(message, separators=(",", ":")) # Compact JSON removing whitespace
                     self.mqtt_client.publish(self.mqtt_topic, payload)
+
+                    # Measure packet size
+                    self.packet_count += 1
+                    self.total_bytes += len(payload.encode('utf-8'))
+
+                    # Report stats every 5 seconds
+                    if time.time() - self.last_report_time >= 5.0:
+                        avg_packet_size = self.total_bytes / self.packet_count
+                        bytes_per_sec = self.total_bytes / 5.0
+                        logger.info(
+                            f"Stats (5s): Avg packet: {avg_packet_size:.1f} bytes | "
+                            f"Rate: {bytes_per_sec/1024:.2f} KB/s ({bytes_per_sec*8/1000:.1f} kbps)"
+                        )
+                        self.packet_count = 0
+                        self.total_bytes = 0
+                        self.last_report_time = time.time()
                 else:
                     logger.warning("Not connected to MQTT, skipping send")
                 
@@ -171,7 +193,7 @@ def parse_args():
     p.add_argument("--mqtt-broker", default="192.168.1.107")
     p.add_argument("--mqtt-port", type=int, default=1883)
     p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101")
-    p.add_argument("--fps", type=int, default=60)
+    p.add_argument("--fps", type=int, default=30)
     p.add_argument("--use-degrees", action="store_true", default=True)
     return p.parse_args()
 

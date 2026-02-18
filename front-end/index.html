@@ -46,7 +46,7 @@ Has URL parameters to configure model and positions
     <script src="js/mqtt/mqtt.min.js"></script>
 	  <script src="js/mqtt/jsonrpcovermqtt.js"></script>
     <script type="module">
-    import { loadModel, setJointAngles, setModelPosition, setRenderMode } from '/js/3Dmodels.js';
+    import { loadModel, loadModelWithId, setJointAngles, setJointAnglesForModel, setModelPosition, setRenderMode, setModelVisibility } from '/js/3Dmodels.js';
     import { initCameraControls } from '/js/cameraControls.js';
 
 // Extract parameters from URL
@@ -73,17 +73,29 @@ const cameraZPos = urlParams.has('cameraZPos') ? parseFloat(urlParams.get('camer
 // Render mode: wireframe or ghost
 const renderModeParam = urlParams.get('wireframe') || 0;
 
+// Leader model settings
+const showLeader = urlParams.get('showLeader') !== '0'; // default true
+const leaderColor = urlParams.has('leaderColor') ? parseInt(urlParams.get('leaderColor'), 16) : 0xffffff;
+const leaderOpacity = urlParams.has('leaderOpacity') ? parseFloat(urlParams.get('leaderOpacity')) : 0.8;
+
+// Follower model settings
+const showFollower = urlParams.get('showFollower') !== '0'; // default true
+const followerColor = urlParams.has('followerColor') ? parseInt(urlParams.get('followerColor'), 16) : 0xffffff;
+const followerOpacity = urlParams.has('followerOpacity') ? parseFloat(urlParams.get('followerOpacity')) : 0.8;
+
 // Apply settings
 setModelPosition(xPos, yPos, zPos);
 setRenderMode(renderModeParam == 1);
 
-// Load model and only initialize MQTT if successful
-loadModel('./models/' + modelName).then(modelLoaded => {
-  if (!modelLoaded) {
-    console.warn('Model failed to load, skipping MQTT initialization');
-    return;
-  }
+// Load follower model (actual positions) first - renders underneath
+const followerLoaded = showFollower ? await loadModelWithId('./models/' + modelName, 'follower', {x: 0, y: 0, z: 0}, 0, followerColor, followerOpacity) : false;
 
+// Load leader model (intended positions) second - renders on top
+const leaderLoaded = showLeader ? await loadModelWithId('./models/' + modelName, 'leader', {x: 0, y: 0, z: 0}, 1, leaderColor, leaderOpacity) : false;
+
+if (!leaderLoaded && !followerLoaded) {
+  console.warn('Both models failed to load, skipping MQTT initialization');
+} else {
   const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName);
 
   const cameraController = initCameraControls({
@@ -102,9 +114,22 @@ loadModel('./models/' + modelName).then(modelLoaded => {
         id: message.id,
         result: jsonRpcService.clientId
       });
-    } else if (method === "set_joint_angles") {
+    } else if (method === "set_leader_joint_angles") {
       const joints = message.params?.joints || {};
-      setJointAngles(joints);
+      // Update leader model with intended positions
+      if (leaderLoaded) {
+        setJointAnglesForModel('leader', joints);
+      } else {
+        // Fallback to old behavior if only one model loaded
+        setJointAngles(joints);
+      }
+      return;
+    } else if (method === "set_follower_joint_angles") {
+      const joints = message.params?.joints || {};
+      // Update follower model with actual positions
+      if (followerLoaded) {
+        setJointAnglesForModel('follower', joints);
+      }
       return;
     } else if (method === "change-camera") {
       console.log('Received camera update message:', message);
@@ -117,7 +142,7 @@ loadModel('./models/' + modelName).then(modelLoaded => {
       return;
     }
   };
-});
+}
     </script>
   </body>
 </html>

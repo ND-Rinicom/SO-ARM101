@@ -21,6 +21,9 @@ const initialRotations = new Map(); // Store initial/rest rotations for each bon
 let modelPositionOffset = { x: 0, y: 0, z: 0 }; // Configurable model position offset
 let modelRotationOffset = { x: 0, y: Math.PI, z: 0 }; // Configurable model rotation offset (default 180° on X)
 
+// Support for multiple models (e.g., leader and follower)
+const models = new Map(); // modelId -> { model, bonesByName, objectsByName, initialRotations, jointAxisConfig }
+
 const outlineMap = new WeakMap(); // mesh -> lineSegments
 
 const OUTLINE_COLOR = 0x000000;
@@ -76,12 +79,12 @@ function addOutlineForMesh(mesh, material = outlineMaterial, edgeThresholdAngle 
   outlineMap.set(mesh, lines);
 }
 
-function getMaterial() {
+function getMaterial(color = 0xffffff, opacity = 0.8) {
   if (!wireframeMode) {
     return new THREE.MeshStandardMaterial({
-      color: 0xffffff,
+      color: color,
       transparent: true,
-      opacity: 0.8,
+      opacity: opacity,
 
       // Stop objects behind the model showing through
       blending: THREE.NoBlending,
@@ -183,6 +186,207 @@ function loadModel(modelBasePath) {
       });
     });
   });
+}
+
+// Load a model with a specific identifier (e.g., 'leader' or 'follower')
+function loadModelWithId(modelBasePath, modelId, positionOffset = {x: 0, y: 0, z: 0}, renderOrder = 0, color = 0xffffff, opacity = 0.8) {
+  const loader = new GLTFLoader();
+  console.log(`Loading model '${modelId}':`, modelBasePath);
+
+  const modelPath = modelBasePath + '.glb';
+  const configPath = modelBasePath + '.json';
+
+  return new Promise((resolve, _reject) => {
+    // Load joint config first
+    loadJointConfigForModel(configPath, modelId).then(() => {
+      fetch(modelPath, { method: 'HEAD' })
+        .then(response => {
+          if (!response.ok) {
+            console.warn(`Model not found: ${modelPath} (status: ${response.status})`);
+            resolve(false);
+            return;
+          }
+
+          loader.load(
+            modelPath,
+            (gltf) => {
+              const modelInstance = gltf.scene;
+              
+              // Apply custom position offset
+              modelInstance.position.add(new THREE.Vector3(positionOffset.x, positionOffset.y, positionOffset.z));
+              
+              // Apply custom rotation offset
+              modelInstance.rotation.set(modelRotationOffset.x, modelRotationOffset.y, modelRotationOffset.z);
+
+              const material = getMaterial(color, opacity);
+              material.side = THREE.DoubleSide;
+
+              const modelData = {
+                model: modelInstance,
+                bonesByName: new Map(),
+                objectsByName: new Map(),
+                initialRotations: new Map(),
+                jointAxisConfig: null
+              };
+
+              // Apply materials + collect bones
+              modelInstance.traverse((child) => {
+                if (child.isMesh) {
+                  child.material = material.clone(); // Clone to avoid sharing
+                  child.renderOrder = renderOrder; // Set render order for layering
+
+                  if (wireframeMode) {
+                    addOutlineForMesh(child, wireframeOutlineMaterial);
+                  } else {
+                    addOutlineForMesh(child);
+                  }
+                }
+
+                if (child.isBone) {
+                  const lowerName = child.name.toLowerCase();
+                  modelData.bonesByName.set(lowerName, child);
+                  modelData.initialRotations.set(lowerName, {
+                    x: child.rotation.x,
+                    y: child.rotation.y,
+                    z: child.rotation.z
+                  });
+                } else if (child.name) {
+                  const lowerName = child.name.toLowerCase();
+                  modelData.objectsByName.set(lowerName, child);
+                  modelData.initialRotations.set(lowerName, {
+                    x: child.rotation.x,
+                    y: child.rotation.y,
+                    z: child.rotation.z
+                  });
+                }
+              });
+
+              // Load joint config for this model
+              if (models.has(modelId)) {
+                const existingModelData = models.get(modelId);
+                modelData.jointAxisConfig = existingModelData.jointAxisConfig;
+              }
+
+              models.set(modelId, modelData);
+              scene.add(modelInstance);
+              
+              resolve(true);
+              console.log(`Loaded model '${modelId}':`, modelInstance);
+            },
+            undefined,
+            (error) => {
+              console.error(`Error loading model: ${modelPath}`, error);
+              resolve(false);
+            }
+          );
+        })
+        .catch(error => {
+          console.warn(`Failed to check model existence: ${modelPath}`, error);
+          resolve(false);
+        });
+    });
+  });
+}
+
+// Load joint axis configuration for a specific model
+async function loadJointConfigForModel(configPath, modelId) {
+  try {
+    const response = await fetch(configPath);
+    if (!response.ok) {
+      console.warn(`Joint config not found: ${configPath} (status: ${response.status})`);
+      return false;
+    }
+    const config = await response.json();
+    console.log(`Loaded joint axis configuration for '${modelId}':`, config);
+    
+    // Store config for this model
+    if (models.has(modelId)) {
+      models.get(modelId).jointAxisConfig = config;
+    } else {
+      // Store temporarily until model is loaded
+      models.set(modelId, { jointAxisConfig: config });
+    }
+    return true;
+  } catch (error) {
+    console.error(`Error loading joint config for '${modelId}':`, error);
+    return false;
+  }
+}
+
+// --- CONFIGURE LOADED MODELS ---
+
+// Set joint angles for a specific model
+function setJointAnglesForModel(modelId, jointAngles) {
+  const modelData = models.get(modelId);
+  if (!modelData) {
+    console.warn(`No model found with id: ${modelId}`);
+    return;
+  }
+
+  const config = modelData.jointAxisConfig;
+  
+  if (!config || !config.joints) {
+    console.warn(`No joint configuration loaded for model '${modelId}', using fallback method`);
+    for (const jointName in jointAngles) {
+      const axes = jointAngles[jointName];
+      for (const axis in axes) {
+        setRotationForModel(modelId, jointName, axis, axes[axis]);
+      }
+    }
+  } else {
+    for (const jointName in jointAngles) {
+      const cleanName = jointName.endsWith(".pos") ? jointName.slice(0, -4) : jointName;
+      
+      const axis = config.joints[cleanName];
+      if (!axis) {
+        console.warn(`No axis configuration found for joint: ${cleanName} in model '${modelId}'`);
+        continue;
+      }
+      
+      let angle = jointAngles[jointName];
+      
+      if (cleanName === "gripper") {
+        angle = -((angle / 100) * 127);
+      } else if (cleanName === "wrist_roll") {
+        angle = -angle;
+      }
+      
+      setRotationForModel(modelId, cleanName, axis, angle);
+    }
+  }
+  
+  renderer.render(scene, camera);
+}
+
+// Set rotation for a specific bone in a specific model
+function setRotationForModel(modelId, jointName, axis, valueDeg) {
+  const modelData = models.get(modelId);
+  if (!modelData) {
+    console.warn(`No model found with id: ${modelId}`);
+    return;
+  }
+
+  if (jointName.endsWith(".pos")) {
+    jointName = jointName.slice(0, -4);
+  }
+  
+  const bone = modelData.bonesByName.get(jointName) || modelData.objectsByName.get(jointName);
+  if (!bone) {
+    console.warn(`No bone or object found for jointName: ${jointName} in model '${modelId}'`);
+    return;
+  }
+
+  if (axis !== "x" && axis !== "y" && axis !== "z") return;
+
+  const initialRot = modelData.initialRotations.get(jointName);
+  if (!initialRot) {
+    console.warn(`No initial rotation found for: ${jointName} in model '${modelId}'`);
+    return;
+  }
+
+  const value = axis === "y" ? -valueDeg : valueDeg;
+  bone.rotation[axis] = initialRot[axis] + THREE.MathUtils.degToRad(value);
+  bone.updateMatrixWorld(true);
 }
 
 // --- CONFIGURE LOADED MODELS ---
@@ -332,17 +536,54 @@ function setCameraPose(x = 0, y = 0, z = 1, targetX = 0, targetY = 0, targetZ = 
   renderScene();
 }
 
+// Show or hide a specific model
+function setModelVisibility(modelId, visible) {
+  const modelData = models.get(modelId);
+  if (!modelData || !modelData.model) {
+    console.warn(`No model found with id: ${modelId}`);
+    return;
+  }
+  modelData.model.visible = visible;
+  renderScene();
+}
+
+// Update model color and opacity
+function setModelAppearance(modelId, color = null, opacity = null) {
+  const modelData = models.get(modelId);
+  if (!modelData || !modelData.model) {
+    console.warn(`No model found with id: ${modelId}`);
+    return;
+  }
+  
+  modelData.model.traverse((child) => {
+    if (child.isMesh && child.material) {
+      if (color !== null) {
+        child.material.color.setHex(color);
+      }
+      if (opacity !== null) {
+        child.material.opacity = opacity;
+      }
+    }
+  });
+  
+  renderScene();
+}
+
 // Export what your HTML needs
 export {
   loadModel,
   loadJointConfig,
+  loadModelWithId,
   setJointAngles,
+  setJointAnglesForModel,
   setRenderMode,
   setCameraTarget,
   setCameraPose,
   setModelPosition,
   setModelRotation,
   setLighting,
+  setModelVisibility,
+  setModelAppearance,
   renderScene,
   camera,
   renderer

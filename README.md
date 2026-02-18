@@ -1,14 +1,15 @@
 # Notes
 - Could potentianly implement a "hybrid" arm model that takes best of both from follower and leader.
+- Could add https://fennec-hub.github.io/three-viewport-gizmo/ to front end, looks cool but unnecesary maybe ask Ben if I have spare time later on
 
 # TO DO
-- Improve README setup instructions
-- Finish implementing 3d manipulation of frontend camera (maybe add moving of arm controls aswell)
+- Improve README setup instructions ✅ 
+- Finish implementing 3d manipulation of frontend camera (maybe add moving of arm controls aswell) ✅
+- Implement feedback values from the follower and display this as a secondary ghost within the front end 
 - Fix physical wrist roll on follower
 - Amend blender model as wrist pitch is at an angle
 - Add talked about #? method decleration in front end.
 - Improve wireframe of the model on front end
-- Implement feedback values from the follower and display this as a secondary ghost within the front end 
 - Finish README & add improved comments
 - Report writing: Finish new diagrams & describe project structure, justifying decisions.
 - Maybe adjust clamping to be less strict if safe to do so

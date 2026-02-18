@@ -111,14 +111,14 @@ python scripts/leader_mqtt_sender.py \
   --mqtt-broker 192.168.1.107 \             # MQTT broker IP or hostname
   --mqtt-port 1883 \                        # MQTT broker port
   --mqtt-topic watchman_robotarm/so-101 \   # MQTT topic for joint commands
-  --fps 60                                  # Control loop frequency (Hz)
+  --fps 30                                  # Control loop frequency (Hz)
 ```
 
 You should see:
 ```
 Leader arm connected
 Connected to MQTT broker
-Leader sender started at 60 FPS
+Leader sender started at 30 FPS
 Move the leader arm to control the follower
 ```
 
