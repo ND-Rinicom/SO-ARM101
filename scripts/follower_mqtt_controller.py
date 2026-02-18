@@ -11,6 +11,7 @@ import logging
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -179,6 +180,11 @@ class FollowerSafetyController:
         self.mqtt_port = mqtt_port
         self.mqtt_topic = mqtt_topic
 
+        # Threading for position publishing
+        self.position_publish_interval = 0.1  # Publish every 100ms
+        self.publish_thread = None
+        self.publish_thread_stop = threading.Event()
+
         self.is_running = False
 
     def _on_connect(self, client, userdata, flags, rc):
@@ -224,6 +230,20 @@ class FollowerSafetyController:
         except Exception as e:
             logger.error(f"Error publishing follower positions: {e}")
 
+    def _position_publish_loop(self):
+        """Background thread that periodically publishes follower positions"""
+        logger.info(f"Position publishing thread started (interval: {self.position_publish_interval}s)")
+        while not self.publish_thread_stop.is_set():
+            try:
+                self._publish_follower_positions()
+            except Exception as e:
+                logger.error(f"Error in position publish loop: {e}")
+            
+            # Wait for the interval or until stop is signaled
+            self.publish_thread_stop.wait(self.position_publish_interval)
+        
+        logger.info("Position publishing thread stopped")
+
     def _on_message(self, client, userdata, msg):
         try:
             message = json.loads(msg.payload.decode())
@@ -255,9 +275,6 @@ class FollowerSafetyController:
                 safe_goal_pos = goal_pos
 
             self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
-            
-            # Publish current follower positions after movement
-            self._publish_follower_positions()
 
         except json.JSONDecodeError:
             logger.error(f"Failed to parse JSON: {msg.payload}")
@@ -291,6 +308,11 @@ class FollowerSafetyController:
             logger.info(f"Connecting to MQTT broker at {self.mqtt_broker}:{self.mqtt_port}...")
             self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, keepalive=60)
 
+            # Start background thread for position publishing
+            self.publish_thread_stop.clear()
+            self.publish_thread = threading.Thread(target=self._position_publish_loop, daemon=True)
+            self.publish_thread.start()
+
             logger.info("Follower controller started. Waiting for targets...")
             logger.info(f"Jump protection: max_relative_target = {self.max_relative_target}")
             self.is_running = True
@@ -306,6 +328,12 @@ class FollowerSafetyController:
     def stop(self):
         if self.is_running:
             logger.info("Stopping follower controller...")
+            
+            # Stop position publishing thread
+            if self.publish_thread and self.publish_thread.is_alive():
+                self.publish_thread_stop.set()
+                self.publish_thread.join(timeout=2)
+            
             try:
                 self.mqtt_client.loop_stop()
             except Exception:
