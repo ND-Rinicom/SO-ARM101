@@ -10,13 +10,25 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 // --- GLOBALS ---
-let model;
+const models = {
+  follower: null,
+  leader: null
+};
 let wireframeMode = false;
-let jointAxisConfig = null; // Joint axis configuration loaded from JSON
+const jointAxisConfigs = {
+  follower: null,
+  leader: null
+};
 
-const bonesByName = new Map();
-const objectsByName = new Map(); // For models without bones
-const initialRotations = new Map(); // Store initial/rest rotations for each bone/object
+// Separate tracking for each model
+const bonesByModelName = {
+  follower: new Map(),
+  leader: new Map()
+};
+const initialRotationsByModelName = {
+  follower: new Map(),
+  leader: new Map()
+};
 
 let modelPositionOffset = { x: 0, y: 0, z: 0 }; // Configurable model position offset
 let modelRotationOffset = { x: 0, y: Math.PI, z: 0 }; // Configurable model rotation offset (default 180° on X)
@@ -41,15 +53,15 @@ const wireframeOutlineMaterial = new THREE.LineBasicMaterial({
 // --- LOADING MODELS ---
 
 // Load joint axis configuration from JSON file
-async function loadJointConfig(configPath) {
+async function loadJointConfig(configPath, modelName) {
   try {
     const response = await fetch(configPath);
     if (!response.ok) {
       console.warn(`Joint config not found: ${configPath} (status: ${response.status})`);
       return false;
     }
-    jointAxisConfig = await response.json();
-    console.log("Loaded joint axis configuration:", jointAxisConfig);
+    jointAxisConfigs[modelName] = await response.json();
+    console.log(`Loaded joint axis configuration for ${modelName}:`, jointAxisConfigs[modelName]);
     return true;
   } catch (error) {
     console.error("Error loading joint config:", error);
@@ -93,9 +105,15 @@ function getMaterial() {
   }
 }
 
-function loadModel(modelBasePath) {
+function loadModel(modelBasePath, modelName = 'follower') {
   const loader = new GLTFLoader();
-  console.log("Loading model:", modelBasePath);
+  console.log(`Loading model for ${modelName}:`, modelBasePath);
+
+  // Validate modelName
+  if (modelName !== 'follower' && modelName !== 'leader') {
+    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    return Promise.resolve(false);
+  }
 
   // Add extensions for model and config files
   const modelPath = modelBasePath + '.glb';
@@ -103,7 +121,7 @@ function loadModel(modelBasePath) {
 
   return new Promise((resolve, _reject) => {
     // Load joint config first
-    loadJointConfig(configPath).then(() => {
+    loadJointConfig(configPath, modelName).then(() => {
       // Check if model exists first
       fetch(modelPath, { method: 'HEAD' })
         .then(response => {
@@ -117,7 +135,8 @@ function loadModel(modelBasePath) {
           loader.load(
             modelPath,
             (gltf) => {
-            model = gltf.scene;
+            const model = gltf.scene;
+            models[modelName] = model;
             
             // Apply custom position offset
             model.position.add(new THREE.Vector3(modelPositionOffset.x, modelPositionOffset.y, modelPositionOffset.z));
@@ -125,15 +144,20 @@ function loadModel(modelBasePath) {
             // Apply custom rotation offset
             model.rotation.set(modelRotationOffset.x, modelRotationOffset.y, modelRotationOffset.z);
 
+            // Slightly scale the leader model to reduce z-fighting when both models overlap
+            if (modelName === 'leader') {
+              model.scale.multiplyScalar(1.01);
+            }
+
             // Get material (wireframe or ghost)
             const material = getMaterial();
             material.side = THREE.DoubleSide; // Ensure both sides are rendered
 
             // Apply materials + collect bones
             model.traverse((child) => {
-              console.log("Model child:", child.name, child.type);
+              console.log(`Model child for ${modelName}:`, child.name, child.type);
               if (child.isMesh) {
-                child.material = material;
+                child.material = material.clone(); // Clone material for independent color control
 
                 // Add outlines (green for wireframe mode, black for ghost mode)
                 if (wireframeMode) {
@@ -145,19 +169,9 @@ function loadModel(modelBasePath) {
 
               if (child.isBone) {
                 const lowerName = child.name.toLowerCase();
-                bonesByName.set(lowerName, child);
+                bonesByModelName[modelName].set(lowerName, child);
                 // Store the initial rotation as the "rest position"
-                initialRotations.set(lowerName, {
-                  x: child.rotation.x,
-                  y: child.rotation.y,
-                  z: child.rotation.z
-                });
-              } else if (child.name) {
-                // Store all named objects as potential joints (for non-skeletal models)
-                const lowerName = child.name.toLowerCase();
-                objectsByName.set(lowerName, child);
-                // Store the initial rotation as the "rest position"
-                initialRotations.set(lowerName, {
+                initialRotationsByModelName[modelName].set(lowerName, {
                   x: child.rotation.x,
                   y: child.rotation.y,
                   z: child.rotation.z
@@ -168,7 +182,7 @@ function loadModel(modelBasePath) {
             scene.add(model);
             
             resolve(true);
-            console.log("Loaded model:", model);
+            console.log(`Loaded model for ${modelName}:`, model);
           },
           undefined,
           (error) => {
@@ -187,16 +201,54 @@ function loadModel(modelBasePath) {
 
 // --- CONFIGURE LOADED MODELS ---
 
-// Set all given joint angles using the joint axis configuration
-function setJointAngles(jointAngles) {
+// Unload a specific model
+function unloadModel(modelName) {
+  if (modelName !== 'follower' && modelName !== 'leader') {
+    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    return false;
+  }
+
+  const model = models[modelName];
+  if (!model) {
+    console.warn(`No model loaded for ${modelName}`);
+    return false;
+  }
+
+  // Remove from scene
+  scene.remove(model);
+
+  // Clear tracking data
+  bonesByModelName[modelName].clear();
+  initialRotationsByModelName[modelName].clear();
+  jointAxisConfigs[modelName] = null;
+  models[modelName] = null;
+
+  console.log(`Unloaded model for ${modelName}`);
+  renderScene();
+  return true;
+}
+
+// Set joint angles for a specific model
+function setJointAngles(jointAngles, modelName) {
+  if (modelName !== 'follower' && modelName !== 'leader') {
+    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    return;
+  }
+
+  if (!models[modelName]) {
+    console.warn(`No model loaded for ${modelName}`);
+    return;
+  }
+
+  const jointAxisConfig = jointAxisConfigs[modelName];
+  
   // If no joint config loaded, fall back to old behavior
   if (!jointAxisConfig || !jointAxisConfig.joints) {
-    console.warn("No joint configuration loaded, using fallback method");
+    console.warn(`No joint configuration loaded for ${modelName}, using fallback method`);
     for (const jointName in jointAngles) {
       const axes = jointAngles[jointName];
       for (const axis in axes) {
-        setRotation(jointName, axis, axes[axis]);
-        //console.log(`Set joint ${jointName} axis ${axis} to ${axes[axis]} degrees`);
+        setRotation(jointName, axis, axes[axis], modelName);
       }
     }
   } else {
@@ -217,16 +269,14 @@ function setJointAngles(jointAngles) {
       
       // Special handling for gripper: convert from 0-100 normalized to 0 to -127 degrees
       if (cleanName === "gripper") {
-        angle = -((angle / 100) * 127);  // 0 -> 0°, 100 -> 127°
-        //console.log(`Converted gripper angle to ${angle} degrees`);
+        angle = -((angle / 100) * 127);
       }
       else if (cleanName === "wrist_roll") {
         angle = -angle;
       }
       
       // Set the rotation
-      setRotation(cleanName, axis, angle);
-      //console.log(`Set joint ${cleanName} axis ${axis} to ${angle} degrees`);
+      setRotation(cleanName, axis, angle, modelName);
     }
   }
   
@@ -235,25 +285,25 @@ function setJointAngles(jointAngles) {
 }
 
 // Set rotation of a named bone
-function setRotation(jointName, axis, valueDeg) {
+function setRotation(jointName, axis, valueDeg, modelName) {
   // Strip ".pos" suffix if present
   if (jointName.endsWith(".pos")) {
     jointName = jointName.slice(0, -4);
   }
   
-  // Try to find bone first, then fall back to regular object
-  const bone = bonesByName.get(jointName) || objectsByName.get(jointName);
+  // Bones only (models always have bones)
+  const bone = bonesByModelName[modelName].get(jointName);
   if (!bone) {
-    console.warn("No bone or object found for jointName:", jointName, "Known bones:", [...bonesByName.keys()], "Known objects:", [...objectsByName.keys()]);
+    console.warn(`No bone found for jointName: ${jointName} in model ${modelName}`);
     return;
   }
 
   if (axis !== "x" && axis !== "y" && axis !== "z") return;
 
   // Get the initial/rest rotation for this bone
-  const initialRot = initialRotations.get(jointName);
+  const initialRot = initialRotationsByModelName[modelName].get(jointName);
   if (!initialRot) {
-    console.warn("No initial rotation found for:", jointName);
+    console.warn(`No initial rotation found for: ${jointName} in model ${modelName}`);
     return;
   }
 
@@ -278,11 +328,14 @@ function setRenderMode(wireframe = false) {
 function setModelPosition(x = 0, y = 0, z = 0) {
   modelPositionOffset = { x, y, z };
   
-  // If model already loaded, update its position
-  if (model) {
-    const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    model.position.set(-center.x + x, -center.y + y, -center.z + z);
+  // If models already loaded, update their positions
+  for (const modelName in models) {
+    const model = models[modelName];
+    if (model) {
+      const box = new THREE.Box3().setFromObject(model);
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.set(-center.x + x, -center.y + y, -center.z + z);
+    }
   }
 }
 
@@ -290,10 +343,60 @@ function setModelPosition(x = 0, y = 0, z = 0) {
 function setModelRotation(xRad = 0, yRad = 0, zRad = 0) {
   modelRotationOffset = { x: xRad, y: yRad, z: zRad };
   
-  // If model already loaded, update its rotation
-  if (model) {
-    model.rotation.set(xRad, yRad, zRad);
+  // If models already loaded, update their rotations
+  for (const modelName in models) {
+    const model = models[modelName];
+    if (model) {
+      model.rotation.set(xRad, yRad, zRad);
+    }
   }
+}
+
+// Set the color of a specific model (hex color)
+function setModelColor(modelName, color) {
+  if (modelName !== 'follower' && modelName !== 'leader') {
+    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    return;
+  }
+
+  const model = models[modelName];
+  if (!model) {
+    console.warn(`No model loaded for ${modelName}`);
+    return;
+  }
+
+  model.traverse((child) => {
+    if (child.isMesh && child.material) {
+      child.material.color.setHex(color);
+    }
+  });
+
+  console.log(`Set color for ${modelName} to ${color.toString(16)}`);
+  renderScene();
+}
+
+// Set the transparency of a specific model (opacity 0.0 - 1.0)
+function setModelTransparency(modelName, opacity) {
+  if (modelName !== 'follower' && modelName !== 'leader') {
+    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    return;
+  }
+
+  const model = models[modelName];
+  if (!model) {
+    console.warn(`No model loaded for ${modelName}`);
+    return;
+  }
+
+  model.traverse((child) => {
+    if (child.isMesh && child.material) {
+      child.material.opacity = Math.max(0, Math.min(1, opacity));
+      child.material.transparent = opacity < 1.0;
+    }
+  });
+
+  console.log(`Set transparency for ${modelName} to ${opacity}`);
+  renderScene();
 }
 
 // --- CAMERA AND LIGHTING ---
@@ -335,6 +438,7 @@ function setCameraPose(x = 0, y = 0, z = 1, targetX = 0, targetY = 0, targetZ = 
 // Export what your HTML needs
 export {
   loadModel,
+  unloadModel,
   loadJointConfig,
   setJointAngles,
   setRenderMode,
@@ -342,6 +446,8 @@ export {
   setCameraPose,
   setModelPosition,
   setModelRotation,
+  setModelColor,
+  setModelTransparency,
   setLighting,
   renderScene,
   camera,

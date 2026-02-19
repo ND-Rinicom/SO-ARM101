@@ -46,7 +46,7 @@ Has URL parameters to configure model and positions
     <script src="js/mqtt/mqtt.min.js"></script>
 	  <script src="js/mqtt/jsonrpcovermqtt.js"></script>
     <script type="module">
-    import { loadModel, setJointAngles, setModelPosition, setRenderMode } from '/js/3Dmodels.js';
+    import { loadModel, unloadModel, setJointAngles, setModelPosition, setRenderMode, setModelColor, setModelTransparency } from '/js/3Dmodels.js';
     import { initCameraControls } from '/js/cameraControls.js';
 
 // Extract parameters from URL
@@ -77,11 +77,24 @@ const renderModeParam = urlParams.get('wireframe') || 0;
 setModelPosition(xPos, yPos, zPos);
 setRenderMode(renderModeParam == 1);
 
-// Load model and only initialize MQTT if successful
-loadModel('./models/' + modelName).then(modelLoaded => {
-  if (!modelLoaded) {
-    console.warn('Model failed to load, skipping MQTT initialization');
+// Load both models
+const modelPath = './models/' + modelName;
+Promise.all([
+  loadModel(modelPath, 'follower'),
+  loadModel(modelPath, 'leader')
+]).then(([followerLoaded, leaderLoaded]) => {
+  if (!followerLoaded && !leaderLoaded) {
+    console.warn('Both models failed to load, skipping MQTT initialization');
     return;
+  }
+
+  // Set different colors for each model (optional - can be customized via exposed functions)
+  if (followerLoaded) {
+    setModelColor('follower', 0x88ccff); // Light blue for follower
+    setModelTransparency('follower', 0.8); 
+  }
+  if (leaderLoaded) {
+    setModelColor('leader', 0xffffff); // White for leader
   }
 
   const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName);
@@ -102,9 +115,13 @@ loadModel('./models/' + modelName).then(modelLoaded => {
         id: message.id,
         result: jsonRpcService.clientId
       });
-    } else if (method === "set_joint_angles") {
+    } else if (method === "set_follower_joint_angles") {
       const joints = message.params?.joints || {};
-      setJointAngles(joints);
+      setJointAngles(joints, 'leader');
+      return;
+    } else if (method === "set_actual_joint_angles") {
+      const joints = message.params?.joints || {};
+      setJointAngles(joints, 'follower');
       return;
     } else if (method === "change-camera") {
       console.log('Received camera update message:', message);
@@ -117,6 +134,21 @@ loadModel('./models/' + modelName).then(modelLoaded => {
       return;
     }
   };
+
+  // Expose functions globally for easy access from browser console
+  window.robotControl = {
+    loadFollower: () => loadModel(modelPath, 'follower'),
+    loadLeader: () => loadModel(modelPath, 'leader'),
+    unloadFollower: () => unloadModel('follower'),
+    unloadLeader: () => unloadModel('leader'),
+    setFollowerColor: (color) => setModelColor('follower', color),
+    setLeaderColor: (color) => setModelColor('leader', color),
+    setFollowerTransparency: (opacity) => setModelTransparency('follower', opacity),
+    setLeaderTransparency: (opacity) => setModelTransparency('leader', opacity),
+    setFollowerJointAngles: (joints) => setJointAngles(joints, 'follower'),
+    setLeaderJointAngles: (joints) => setJointAngles(joints, 'leader')
+  };
+  console.log('Robot control functions available at window.robotControl');
 });
     </script>
   </body>

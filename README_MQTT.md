@@ -27,7 +27,7 @@ pip install paho-mqtt feetech-servo-sdk pyserial numpy
 Copy the project from PC to Raspberry Pi:
 ```bash
 # From your PC:
-scp -r /<PROJECT_PATH>/SO-ARM101 <PI_USERNAME>@<PI_IP_ADDRESS>:~/SO-ARM101
+scp -r /<PROJECT_PATH>/ <PI_USERNAME>@<PI_IP_ADDRESS>:~/
 ```
 
 ### 4. Find Serial Port

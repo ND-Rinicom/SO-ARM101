@@ -198,8 +198,8 @@ class FollowerSafetyController:
             message = json.loads(msg.payload.decode())
 
             method = message.get("method")
-            if method != "set_joint_angles":
-                logger.warning(f"Unknown method: {method}, skipping")
+            if method != "set_follower_joint_angles":
+                # Only process messages with method 'set_joint_angles'
                 return
 
             params = message.get("params", {})
@@ -216,6 +216,20 @@ class FollowerSafetyController:
                 return
 
             present_pos = self.follower.bus.sync_read("Present_Position")
+
+            # Publish current/present joint positions to MQTT so viewers receive
+            # the follower's actual angles. Send as JSON-RPC style message with
+            # method 'set_actual_joint_angles' and params.joints mapping.
+            try:
+                joints_payload = { f"{k}.pos": v for k, v in present_pos.items() }
+                mqtt_msg = {
+                    "jsonrpc": "2.0",
+                    "method": "set_actual_joint_angles",
+                    "params": { "joints": joints_payload }
+                }
+                self.mqtt_client.publish(self.mqtt_topic, json.dumps(mqtt_msg))
+            except Exception as e:
+                logger.warning("Failed to publish present_pos to MQTT: %s", e)
 
             if self.max_relative_target is not None:
                 goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}

@@ -129,7 +129,7 @@ class LeaderMQTTSender:
                     message = {
                         "jsonrpc": "2.0",
                         "id": str(uuid.uuid4()),
-                        "method": "set_joint_angles",
+                        "method": "set_follower_joint_angles",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "params": {
                             "units": "degrees" if self.leader.config.use_degrees else "normalized",
