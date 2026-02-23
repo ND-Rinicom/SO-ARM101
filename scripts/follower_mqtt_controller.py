@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
 """
-MQTT-controlled SO-ARM101 Follower with Jump Protection
-Optional ustreamer camera server.
-Run this on the Raspberry Pi connected to the follower arm
+UDP-controlled SO-ARM101 Follower with Jump Protection
+Sends servo telemetry via UDP + H.264 RTP video over UDP (Option A / GStreamer).
+Run this on the Raspberry Pi connected to the follower arm.
+
+Video pipeline:
+  v4l2src -> (raw) -> encoder -> rtph264pay -> udpsink
 """
 
 import argparse
 import json
 import logging
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -18,7 +22,6 @@ from typing import Optional
 # Add parent directory to path to import lerobot
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import paho.mqtt.client as mqtt
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
 from lerobot.robots.robot import ensure_safe_goal_position
 
@@ -26,30 +29,63 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-def start_ustreamer(
+def start_gst_h264_rtp_udp(
     device: str,
-    host: str = "0.0.0.0",
-    port: int = 8080,
+    host: str,
+    port: int,
     resolution: str = "640x480",
+    fps: int = 30,
+    bitrate_kbps: int = 1500,
 ) -> subprocess.Popen:
     """
-    Start ustreamer as a background process.
+    Start GStreamer to send H.264 via RTP over UDP.
     Returns a Popen handle so we can terminate it on exit.
+
+    Receiver example:
+      gst-launch-1.0 -v \
+        udpsrc port=5000 caps="application/x-rtp, media=video, encoding-name=H264, payload=96" ! \
+        rtph264depay ! avdec_h264 ! videoconvert ! autovideosink
     """
-    if shutil.which("ustreamer") is None:
-        raise RuntimeError(
-            "ustreamer not found. Install it with: sudo apt install -y ustreamer"
+    if shutil.which("gst-launch-1.0") is None:
+        raise RuntimeError("gst-launch-1.0 not found. Install with: sudo apt install -y gstreamer1.0-tools")
+
+    # Parse resolution "WIDTHxHEIGHT"
+    try:
+        w_str, h_str = resolution.lower().split("x")
+        width, height = int(w_str), int(h_str)
+    except Exception as e:
+        raise ValueError(f"Invalid resolution '{resolution}'. Expected like 640x480") from e
+
+    # Prefer hardware encoder if available (often present on Pi OS builds)
+    # Fallback to x264enc otherwise.
+    have_v4l2h264enc = shutil.which("v4l2-ctl") is not None  # weak signal, but fine
+    # We can't reliably probe plugins without gst-inspect, so we just try v4l2h264enc first.
+    # If it fails immediately, user will see stdout and can switch by installing needed plugins.
+    use_hw = True
+
+    if use_hw:
+        pipeline = (
+            f'v4l2src device={device} ! '
+            f'video/x-raw,width={width},height={height},framerate={fps}/1 ! '
+            f'videoconvert ! '
+            f'v4l2h264enc extra-controls="controls,video_bitrate={bitrate_kbps * 1000}" ! '
+            f'h264parse config-interval=1 ! '
+            f'rtph264pay config-interval=1 pt=96 ! '
+            f'udpsink host={host} port={port} sync=false async=false'
+        )
+    else:
+        pipeline = (
+            f'v4l2src device={device} ! '
+            f'video/x-raw,width={width},height={height},framerate={fps}/1 ! '
+            f'videoconvert ! '
+            f'x264enc tune=zerolatency bitrate={bitrate_kbps} speed-preset=ultrafast key-int-max={fps} ! '
+            f'rtph264pay config-interval=1 pt=96 ! '
+            f'udpsink host={host} port={port} sync=false async=false'
         )
 
-    cmd = [
-        "ustreamer",
-        f"--device={device}",
-        f"--host={host}",
-        f"--port={port}",
-        f"--resolution={resolution}",
-    ]
+    cmd = ["gst-launch-1.0", "-v"] + pipeline.split(" ")
 
-    logger.info("Starting ustreamer: %s", " ".join(cmd))
+    logger.info("Starting GStreamer H264 RTP UDP: %s", " ".join(cmd))
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -58,55 +94,50 @@ def start_ustreamer(
         start_new_session=True,
     )
 
-    time.sleep(0.4)
+    time.sleep(0.6)
     if proc.poll() is not None:
         out = ""
         try:
             out = (proc.stdout.read() or "").strip() if proc.stdout else ""
         except Exception:
             pass
-        raise RuntimeError(f"ustreamer exited immediately.\nOutput:\n{out}")
-    logger.info("ustreamer started (pid=%s). Stream: http://<pi-ip>:%d/stream", proc.pid, port)
-    return proc
 
-
-def start_http_server(
-    port: int = 8001,
-    directory: str = "~",
-) -> subprocess.Popen:
-    """
-    Start Python HTTP server as a background process.
-    Returns a Popen handle so we can terminate it on exit.
-    """
-    directory = Path(directory).expanduser()
-    
-    cmd = [
-        "python3",
-        "-m",
-        "http.server",
-        str(port),
-        "--directory",
-        str(directory),
-    ]
-
-    logger.info("Starting HTTP server: %s", " ".join(cmd))
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    )
-
-    time.sleep(0.2)
-    if proc.poll() is not None:
-        out = ""
+        # If hardware encoder pipeline failed, try software x264 automatically once.
+        logger.warning("GStreamer pipeline exited immediately (likely missing v4l2h264enc). Falling back to x264enc.")
         try:
-            out = (proc.stdout.read() or "").strip() if proc.stdout else ""
+            fallback_pipeline = (
+                f'v4l2src device={device} ! '
+                f'video/x-raw,width={width},height={height},framerate={fps}/1 ! '
+                f'videoconvert ! '
+                f'x264enc tune=zerolatency bitrate={bitrate_kbps} speed-preset=ultrafast key-int-max={fps} ! '
+                f'rtph264pay config-interval=1 pt=96 ! '
+                f'udpsink host={host} port={port} sync=false async=false'
+            )
+            fallback_cmd = ["gst-launch-1.0", "-v"] + fallback_pipeline.split(" ")
+            proc = subprocess.Popen(
+                fallback_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                start_new_session=True,
+            )
+            time.sleep(0.6)
+            if proc.poll() is not None:
+                out2 = ""
+                try:
+                    out2 = (proc.stdout.read() or "").strip() if proc.stdout else ""
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    "GStreamer exited immediately (both hw + sw attempts).\n"
+                    f"HW attempt output:\n{out}\n\nSW attempt output:\n{out2}"
+                )
+            logger.info("GStreamer started (pid=%s). H264 RTP UDP: udp://%s:%d", proc.pid, host, port)
+            return proc
         except Exception:
-            pass
-        raise RuntimeError(f"HTTP server exited immediately.\nOutput:\n{out}")
-    logger.info("HTTP server started (pid=%s). Serving: http://<pi-ip>:%d/", proc.pid, port)
+            raise RuntimeError(f"GStreamer exited immediately.\nOutput:\n{out}")
+
+    logger.info("GStreamer started (pid=%s). H264 RTP UDP: udp://%s:%d", proc.pid, host, port)
     return proc
 
 
@@ -127,25 +158,24 @@ def stop_process(proc: Optional[subprocess.Popen], name: str) -> None:
 
 class FollowerSafetyController:
     """
-    MQTT-based follower controller with local jump protection.
-    Optionally starts ustreamer for a webcam and HTTP server for file serving.
+    UDP-based follower controller with local jump protection.
+    Sends servo telemetry via UDP + H.264 RTP video over UDP.
     """
 
     def __init__(
         self,
         follower_port: str = "/dev/ttyACM0",
         follower_id: str = "so_follower",
-        mqtt_broker: str = "192.168.1.107",
-        mqtt_port: int = 1883,
-        mqtt_topic: str = "watchman_robotarm/so-101",
+        udp_host: str = "192.168.1.107",
+        udp_target_port: int = 9000,
+        udp_servo_port: int = 9001,
+        udp_video_port: int = 5000,
         max_relative_target: float = 20.0,
         use_degrees: bool = True,
         camera_device: Optional[str] = None,
-        camera_host: str = "0.0.0.0",
-        camera_port: int = 8080,
         camera_resolution: str = "640x480",
-        http_server_port: Optional[int] = None,
-        http_server_dir: str = "~",
+        camera_fps: int = 30,
+        camera_bitrate_kbps: int = 1500,
     ):
         # Initialize follower
         follower_config = SO101FollowerConfig(
@@ -157,49 +187,39 @@ class FollowerSafetyController:
         self.follower = SO101Follower(follower_config)
         self.max_relative_target = max_relative_target
 
-        # Camera config
+        # Camera config (H.264 RTP over UDP via GStreamer)
         self.camera_device = camera_device
-        self.camera_host = camera_host
-        self.camera_port = camera_port
         self.camera_resolution = camera_resolution
+        self.camera_fps = camera_fps
+        self.camera_bitrate_kbps = camera_bitrate_kbps
         self._camera_proc: Optional[subprocess.Popen] = None
 
-        # HTTP server config
-        self.http_server_port = http_server_port
-        self.http_server_dir = http_server_dir
-        self._http_server_proc: Optional[subprocess.Popen] = None
-
-        # Initialize MQTT
-        self.mqtt_client = mqtt.Client()
-        self.mqtt_client.on_connect = self._on_connect
-        self.mqtt_client.on_message = self._on_message
-        self.mqtt_client.on_disconnect = self._on_disconnect
-        self.mqtt_broker = mqtt_broker
-        self.mqtt_port = mqtt_port
-        self.mqtt_topic = mqtt_topic
+        # UDP config
+        self.udp_host = udp_host
+        self.udp_target_port = udp_target_port
+        self.udp_servo_port = udp_servo_port
+        self.udp_video_port = udp_video_port
+        self._servo_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._target_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         self.is_running = False
 
-    def _on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            logger.info(f"Connected to MQTT broker at {self.mqtt_broker}:{self.mqtt_port}")
-            client.subscribe(self.mqtt_topic)
-            logger.info(f"Subscribed to topic: {self.mqtt_topic}")
-        else:
-            logger.error(f"Failed to connect to MQTT broker. Return code: {rc}")
+    def _send_servo_udp(self, present_pos: dict) -> None:
+        payload = json.dumps(
+            {
+                "type": "servo",
+                "timestamp": time.time(),
+                "joints": {f"{k}.pos": v for k, v in present_pos.items()},
+            }
+        ).encode("utf-8")
+        self._servo_sock.sendto(payload, (self.udp_host, self.udp_servo_port))
 
-    def _on_disconnect(self, client, userdata, rc):
-        logger.warning(f"Disconnected from MQTT broker. Return code: {rc}")
-        if rc != 0:
-            logger.info("Attempting to reconnect...")
-
-    def _on_message(self, client, userdata, msg):
+    def on_target_message(self, payload: str) -> None:
         try:
-            message = json.loads(msg.payload.decode())
+            message = json.loads(payload)
 
             method = message.get("method")
             if method != "set_follower_joint_angles":
-                # Only process messages with method 'set_joint_angles'
                 return
 
             params = message.get("params", {})
@@ -217,19 +237,10 @@ class FollowerSafetyController:
 
             present_pos = self.follower.bus.sync_read("Present_Position")
 
-            # Publish current/present joint positions to MQTT so viewers receive
-            # the follower's actual angles. Send as JSON-RPC style message with
-            # method 'set_actual_joint_angles' and params.joints mapping.
             try:
-                joints_payload = { f"{k}.pos": v for k, v in present_pos.items() }
-                mqtt_msg = {
-                    "jsonrpc": "2.0",
-                    "method": "set_actual_joint_angles",
-                    "params": { "joints": joints_payload }
-                }
-                self.mqtt_client.publish(self.mqtt_topic, json.dumps(mqtt_msg))
+                self._send_servo_udp(present_pos)
             except Exception as e:
-                logger.warning("Failed to publish present_pos to MQTT: %s", e)
+                logger.warning("Failed to send present_pos over UDP: %s", e)
 
             if self.max_relative_target is not None:
                 goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
@@ -240,93 +251,94 @@ class FollowerSafetyController:
             self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
 
         except json.JSONDecodeError:
-            logger.error(f"Failed to parse JSON: {msg.payload}")
+            logger.error("Failed to parse JSON: %s", payload)
         except Exception as e:
-            logger.error(f"Error processing message: {e}")
+            logger.error("Error processing message: %s", e)
 
     def start(self):
         try:
-            # Optional camera
+            # Optional camera (H.264 RTP over UDP via GStreamer)
             if self.camera_device:
-                self._camera_proc = start_ustreamer(
+                self._camera_proc = start_gst_h264_rtp_udp(
                     device=self.camera_device,
-                    host=self.camera_host,
-                    port=self.camera_port,
+                    host=self.udp_host,
+                    port=self.udp_video_port,
                     resolution=self.camera_resolution,
-                )
-
-            # Optional HTTP server
-            if self.http_server_port:
-                self._http_server_proc = start_http_server(
-                    port=self.http_server_port,
-                    directory=self.http_server_dir,
+                    fps=self.camera_fps,
+                    bitrate_kbps=self.camera_bitrate_kbps,
                 )
 
             # Connect to follower arm
-            logger.info(f"Connecting to follower arm on {self.follower.config.port}...")
+            logger.info("Connecting to follower arm on %s...", self.follower.config.port)
             self.follower.connect()
             logger.info("Follower arm connected")
 
-            # Connect to MQTT broker
-            logger.info(f"Connecting to MQTT broker at {self.mqtt_broker}:{self.mqtt_port}...")
-            self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, keepalive=60)
-
             logger.info("Follower controller started. Waiting for targets...")
-            logger.info(f"Jump protection: max_relative_target = {self.max_relative_target}")
+            logger.info("Jump protection: max_relative_target = %s", self.max_relative_target)
+            logger.info(
+                "UDP target listen: 0.0.0.0:%d | Servo UDP target: %s:%d | Video RTP/H264 UDP target: %s:%d",
+                self.udp_target_port,
+                self.udp_host,
+                self.udp_servo_port,
+                self.udp_host,
+                self.udp_video_port,
+            )
+
             self.is_running = True
-            self.mqtt_client.loop_forever()
+            self._target_sock.bind(("0.0.0.0", self.udp_target_port))
+            self._target_sock.settimeout(1.0)
+
+            while self.is_running:
+                try:
+                    data, _addr = self._target_sock.recvfrom(65535)
+                except socket.timeout:
+                    continue
+                self.on_target_message(data.decode("utf-8"))
 
         except KeyboardInterrupt:
             logger.info("\nKeyboard interrupt received")
             self.stop()
         except Exception as e:
-            logger.error(f"Error starting controller: {e}")
+            logger.error("Error starting controller: %s", e)
             self.stop()
 
     def stop(self):
         if self.is_running:
             logger.info("Stopping follower controller...")
             try:
-                self.mqtt_client.loop_stop()
-            except Exception:
-                pass
-            try:
-                self.mqtt_client.disconnect()
-            except Exception:
-                pass
-            try:
                 self.follower.disconnect()
             except Exception:
                 pass
             self.is_running = False
 
-        stop_process(self._camera_proc, "ustreamer")
-        stop_process(self._http_server_proc, "HTTP server")
+        stop_process(self._camera_proc, "gstreamer")
         logger.info("Follower controller stopped")
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="SO-ARM101 follower (MQTT) with optional ustreamer camera and HTTP server.")
+    p = argparse.ArgumentParser(
+        description="SO-ARM101 follower (UDP) with optional H.264 RTP camera stream over UDP (GStreamer)."
+    )
     p.add_argument("--follower-port", default="/dev/ttyACM0")
     p.add_argument("--follower-id", default="so_follower")
-    p.add_argument("--mqtt-broker", default="192.168.1.107")
-    p.add_argument("--mqtt-port", type=int, default=1883)
-    p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101")
+    p.add_argument("--udp-host", default="192.168.1.107")
+    p.add_argument("--udp-target-port", type=int, default=9000)
+    p.add_argument("--udp-servo-port", type=int, default=9001)
+    p.add_argument("--udp-video-port", type=int, default=5000)
     p.add_argument("--max-relative-target", type=float, default=20.0)
     p.add_argument("--use-degrees", action="store_true", default=True)
 
     # Optional camera
-    p.add_argument("--camera", dest="camera_device", default=None,
-                   help="Enable ustreamer and use this V4L2 device, e.g. /dev/video0")
-    p.add_argument("--cam-host", default="0.0.0.0")
-    p.add_argument("--cam-port", type=int, default=8080)
+    p.add_argument(
+        "--camera",
+        dest="camera_device",
+        default=None,
+        help="Enable H.264 RTP over UDP from this V4L2 device, e.g. /dev/video0",
+    )
     p.add_argument("--cam-res", dest="camera_resolution", default="640x480")
+    p.add_argument("--cam-fps", dest="camera_fps", type=int, default=30)
+    p.add_argument("--cam-bitrate-kbps", dest="camera_bitrate_kbps", type=int, default=1500)
 
-    # Optional HTTP server
-    p.add_argument("--http-server", dest="http_server_port", type=int, default=None,
-                   help="Enable Python HTTP server on this port, e.g. 8001")
-    p.add_argument("--http-dir", dest="http_server_dir", default="~",
-                   help="Directory to serve via HTTP server (default: ~)")
     return p.parse_args()
 
 
@@ -336,17 +348,16 @@ def main():
     controller = FollowerSafetyController(
         follower_port=args.follower_port,
         follower_id=args.follower_id,
-        mqtt_broker=args.mqtt_broker,
-        mqtt_port=args.mqtt_port,
-        mqtt_topic=args.mqtt_topic,
+        udp_host=args.udp_host,
+        udp_target_port=args.udp_target_port,
+        udp_servo_port=args.udp_servo_port,
+        udp_video_port=args.udp_video_port,
         max_relative_target=args.max_relative_target,
         use_degrees=args.use_degrees,
         camera_device=args.camera_device,
-        camera_host=args.cam_host,
-        camera_port=args.cam_port,
         camera_resolution=args.camera_resolution,
-        http_server_port=args.http_server_port,
-        http_server_dir=args.http_server_dir,
+        camera_fps=args.camera_fps,
+        camera_bitrate_kbps=args.camera_bitrate_kbps,
     )
 
     controller.start()
