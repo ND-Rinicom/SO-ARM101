@@ -199,7 +199,7 @@ class FollowerSafetyController:
 
             method = message.get("method")
             if method != "set_follower_joint_angles":
-                # Only process messages with method 'set_joint_angles'
+                # Only process messages with method 'set_follower_joint_angles'
                 return
 
             params = message.get("params", {})
