@@ -149,16 +149,25 @@ class CameraStreamer:
             'v4l2src', f'device={self.camera_device}',
             '!', f'video/x-raw,width={width},height={height},framerate=30/1',
             '!', 'videoconvert',
-            '!', 'x264enc', 'tune=zerolatency', 'bitrate=500', 'speed-preset=ultrafast',
-            '!', 'rtph264pay', 'pt=96', 'config-interval=1',
-            '!', 'udpsink', f'host={self.bridge_ip}', f'port={self.follower_camera_port}', 'sync=false', 'async=false'
+            '!', 'video/x-raw,format=I420',          # <--- force 4:2:0
+            '!', 'x264enc',
+                'tune=zerolatency',
+                'speed-preset=ultrafast',
+                'bitrate=500',
+                'key-int-max=30',                    # <--- recover after loss
+                'bframes=0',
+                'byte-stream=true',
+            '!', 'rtph264pay', 'pt=96', 'config-interval=1', 'mtu=1200',
+            '!', 'udpsink', f'host={self.bridge_ip}', f'port={self.follower_camera_port}',
+                'sync=false', 'async=false'
         ]
+
         logger.info(f"Starting GStreamer H.264 pipeline: {' '.join(gst_cmd)}")
         try:
             proc = subprocess.Popen(gst_cmd)
             if stop_event is not None:
                 while not stop_event.is_set():
-                    time.time.sleep(0.2)
+                    time.sleep(0.2)
                 proc.terminate()
                 proc.wait()
             else:
