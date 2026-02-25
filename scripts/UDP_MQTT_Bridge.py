@@ -330,10 +330,10 @@ def main():
     threads.append(bridge_thread)
 
     if args.video_stream:
-        video = VideoWebStreamer(
+        video = MjpegStreamServer(
             udp_port=args.follower_camera_port,
-            http_host=args.video_http_host,
-            http_port=args.video_http_port,
+            bind_host=args.video_http_host,
+            bind_port=args.video_http_port,
             jitter_ms=args.video_jitter_ms,
         )
         video_thread = threading.Thread(target=video.start, args=(stop_event,), daemon=True)

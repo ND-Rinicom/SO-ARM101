@@ -24,6 +24,22 @@ logging.basicConfig(level=logging.INFO,
                     format= "%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+def parse_args():
+    p = argparse.ArgumentParser(description="SO-ARM101 follower")
+    p.add_argument("--follower-port", default="/dev/ttyACM0")
+    p.add_argument("--follower-id", default="so_follower")
+    p.add_argument("--bridge-ip", default="192.168.1.107")
+    p.add_argument("--bridge-port", type=int, default=9000)
+    p.add_argument("--max-relative-target", type=float, default=20.0)
+    p.add_argument("--use-degrees", action="store_true", default=True)
+
+    # Optional camera
+    p.add_argument("--camera", dest="camera_device", default=None,
+                   help="Enable ustreamer and use this V4L2 device, e.g. /dev/video0")
+    p.add_argument("--cam-res", dest="camera_resolution", default="640x480")
+
+    return p.parse_args()
+
 class Follower:
     def __init__(
         self,
@@ -174,23 +190,6 @@ class CameraStreamer:
                 proc.wait()
         except Exception as e:
             logger.error(f"Error starting GStreamer pipeline: {e}")
-
-
-def parse_args():
-    p = argparse.ArgumentParser(description="SO-ARM101 follower")
-    p.add_argument("--follower-port", default="/dev/ttyACM0")
-    p.add_argument("--follower-id", default="so_follower")
-    p.add_argument("--bridge-ip", default="192.168.1.107")
-    p.add_argument("--bridge-port", type=int, default=9000)
-    p.add_argument("--max-relative-target", type=float, default=20.0)
-    p.add_argument("--use-degrees", action="store_true", default=True)
-
-    # Optional camera
-    p.add_argument("--camera", dest="camera_device", default=None,
-                   help="Enable ustreamer and use this V4L2 device, e.g. /dev/video0")
-    p.add_argument("--cam-res", dest="camera_resolution", default="640x480")
-
-    return p.parse_args()
 
 def main():
     args = parse_args()
