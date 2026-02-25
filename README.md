@@ -6,7 +6,11 @@
 - Finish implementing 3d manipulation of frontend camera (maybe add moving of arm controls aswell)
 - Implement feedback values from the follower and display this as a secondary ghost within the front end 
 
+# Problems
+- Currently if follower arm dies we will keep and brocast the last known position but this probably differs due to weights of the arm
+
 # TO DO
+- Camera streaming
 - Add easier to read error logging.
 - Fix physical wrist roll on follower
 - Amend blender model as wrist pitch is at an angle
