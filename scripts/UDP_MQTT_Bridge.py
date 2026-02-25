@@ -201,113 +201,67 @@ class UDP_MQTT_Bridge:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
 
-class MjpegStreamServer:
-    def __init__(self, udp_port=5000, bind_host="127.0.0.1", bind_port=9001, jitter_ms=50):
+
+# RTSP H.264 streaming server using GStreamer
+
+# RTSP H.264 streaming server using GStreamer Python bindings
+class RtspStreamServer:
+    def __init__(self, udp_port=5000, rtsp_host="127.0.0.1", rtsp_port=8000, mount_point="/camera", jitter_ms=50):
         self.udp_port = udp_port
-        self.bind_host = bind_host
-        self.bind_port = bind_port
+        self.rtsp_host = rtsp_host
+        self.rtsp_port = rtsp_port
+        self.mount_point = mount_point
         self.jitter_ms = jitter_ms
 
-        self._latest_jpeg = None
-        self._jpeg_lock = threading.Lock()
-        self._running = False
-
-        self._gst_pipeline = None
-        self._appsink = None
-
-    def _make_handler(self):
-        srv = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                if self.path != "/stream.mjpg":
-                    self.send_error(404)
-                    return
-
-                self.send_response(200)
-                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Expires", "0")
-                self.end_headers()
-
-                while srv._running:
-                    with srv._jpeg_lock:
-                        frame = srv._latest_jpeg
-                    if frame:
-                        try:
-                            self.wfile.write(b"--frame\r\n")
-                            self.wfile.write(b"Content-Type: image/jpeg\r\n")
-                            self.wfile.write(f"Content-Length: {len(frame)}\r\n\r\n".encode())
-                            self.wfile.write(frame)
-                            self.wfile.write(b"\r\n")
-                        except BrokenPipeError:
-                            break
-                    time.sleep(1 / 30)
-
-            def log_message(self, format, *args):
-                # silence default HTTP logs
-                return
-
-        return Handler
-
-    def _on_new_sample(self, sink):
-        sample = sink.emit("pull-sample")
-        if sample is None:
-            return Gst.FlowReturn.ERROR
-
-        buf = sample.get_buffer()
-        caps = sample.get_caps()
-        s = caps.get_structure(0)
-        width = s.get_value("width")
-        height = s.get_value("height")
-
-        ok, mapinfo = buf.map(Gst.MapFlags.READ)
-        if not ok:
-            return Gst.FlowReturn.ERROR
-
-        try:
-            img = Image.frombytes("RGB", (width, height), mapinfo.data, "raw")
-            out = io.BytesIO()
-            img.save(out, format="JPEG", quality=80)
-            jpeg = out.getvalue()
-            with self._jpeg_lock:
-                self._latest_jpeg = jpeg
-        finally:
-            buf.unmap(mapinfo)
-
-        return Gst.FlowReturn.OK
-
-    def _build_pipeline(self):
-        return (
-            f'udpsrc port={self.udp_port} caps="application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000" ! '
-            f'rtpjitterbuffer latency={self.jitter_ms} ! '
-            f'rtph264depay ! h264parse ! decodebin ! '
-            f'videoconvert ! video/x-raw,format=RGB ! '
-            f'appsink name=appsink emit-signals=true sync=false max-buffers=1 drop=true'
-        )
-
     def start(self, stop_event=None):
+        import gi
+        gi.require_version('Gst', '1.0')
+        gi.require_version('GstRtspServer', '1.0')
+        from gi.repository import Gst, GstRtspServer, GObject, GLib
+
         Gst.init(None)
-        self._running = True
 
-        pipeline_str = self._build_pipeline()
-        logger.info("Starting video receiver pipeline: %s", pipeline_str)
-        self._gst_pipeline = Gst.parse_launch(pipeline_str)
-        self._appsink = self._gst_pipeline.get_by_name("appsink")
-        self._appsink.connect("new-sample", self._on_new_sample)
-        self._gst_pipeline.set_state(Gst.State.PLAYING)
+        class UDPH264Factory(GstRtspServer.RTSPMediaFactory):
+            def __init__(self, udp_port, jitter_ms):
+                super().__init__()
+                self.udp_port = udp_port
+                self.jitter_ms = jitter_ms
+                self.set_shared(True)
 
-        server = ThreadingHTTPServer((self.bind_host, self.bind_port), self._make_handler())
-        logger.info("MJPEG stream server on http://%s:%d/stream.mjpg", self.bind_host, self.bind_port)
+            def do_create_element(self, url):
+                pipeline_str = (
+                    f"udpsrc port={self.udp_port} "
+                    f"caps=application/x-rtp,media=video,encoding-name=H264,payload=96,clock-rate=90000 ! "
+                    f"rtpjitterbuffer latency={self.jitter_ms} ! "
+                    f"rtph264depay ! h264parse ! rtph264pay name=pay0 pt=96"
+                )
+                return Gst.parse_launch(pipeline_str)
 
+        server = GstRtspServer.RTSPServer()
+        server.set_address(self.rtsp_host)
+        server.set_service(str(self.rtsp_port))
+        mount_points = server.get_mount_points()
+        factory = UDPH264Factory(self.udp_port, self.jitter_ms)
+        mount_points.add_factory(self.mount_point, factory)
+
+        logger.info(f"Starting RTSP server at rtsp://{self.rtsp_host}:{self.rtsp_port}{self.mount_point} (UDP in: {self.udp_port})")
+
+        server.attach(None)
+
+        # Run the GLib main loop in this thread
+        loop = GLib.MainLoop()
         try:
-            server.serve_forever()
-        finally:
-            self._running = False
-            server.server_close()
-            if self._gst_pipeline:
-                self._gst_pipeline.set_state(Gst.State.NULL)
+            while True:
+                if stop_event is not None and stop_event.is_set():
+                    logger.info("Stop event set, quitting RTSP server main loop...")
+                    loop.quit()
+                    break
+                loop.get_context().iteration(False)
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            logger.info("KeyboardInterrupt received, quitting RTSP server main loop...")
+            loop.quit()
+
 
 def main():
     args = parse_args()
@@ -330,10 +284,11 @@ def main():
     threads.append(bridge_thread)
 
     if args.video_stream:
-        video = MjpegStreamServer(
+        video = RtspStreamServer(
             udp_port=args.follower_camera_port,
-            bind_host=args.video_http_host,
-            bind_port=args.video_http_port,
+            rtsp_host=args.video_http_host,
+            rtsp_port=args.video_http_port,
+            mount_point="/camera",
             jitter_ms=args.video_jitter_ms,
         )
         video_thread = threading.Thread(target=video.start, args=(stop_event,), daemon=True)
