@@ -201,9 +201,6 @@ class UDP_MQTT_Bridge:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
 
-
-# RTSP H.264 streaming server using GStreamer
-
 # RTSP H.264 streaming server using GStreamer Python bindings
 class RtspStreamServer:
     def __init__(self, udp_port=5000, rtsp_host="127.0.0.1", rtsp_port=8000, mount_point="/camera", jitter_ms=50):
