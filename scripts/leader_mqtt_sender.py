@@ -35,7 +35,7 @@ class LeaderMQTTSender:
         leader_id: str = "so_leader",
         mqtt_broker: str = "192.168.1.107",
         mqtt_port: int = 1883,
-        mqtt_topic: str = "watchman_robotarm/so-101",
+        mqtt_topic: str = "watchman_robotarm/so-101/leader",
         fps: int = 60,
         use_degrees: bool = True,
     ):
@@ -92,39 +92,49 @@ class LeaderMQTTSender:
             logger.info(f"Connecting to leader arm on {self.leader.config.port}...")
             self.leader.connect()
             logger.info("Leader arm connected")
-            
+
             # Connect to MQTT broker
             logger.info(f"Connecting to MQTT broker at {self.mqtt_broker}:{self.mqtt_port}...")
             self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port, keepalive=60)
             self.mqtt_client.loop_start()
-            
+
             # Wait for MQTT connection
             timeout = 5
             elapsed = 0
             while not self.is_connected and elapsed < timeout:
                 time.sleep(0.1)
                 elapsed += 0.1
-            
+
             if not self.is_connected:
                 logger.error("Failed to connect to MQTT broker within timeout")
                 return
-            
+
             # Main control loop
             logger.info(f"Leader sender started at {self.fps} FPS")
             logger.info(f"Publishing to topic: {self.mqtt_topic}")
             logger.info("Move the leader arm to control the follower")
-            
+
             self.is_running = True
             loop_time = 1.0 / self.fps
-            
+
+            last_action = None
+            last_send_time = 0.0
+
             while self.is_running:
                 loop_start = time.perf_counter()
-                
+
                 # Read leader position
                 action = self.leader.get_action()
-                
-                # Send via MQTT (only if connected)
-                if self.is_connected:
+
+                # Throttle: only send if action changed, or 0.25s passed since last send
+                now = time.perf_counter()
+                should_send = False
+                if last_action is None or action != last_action:
+                    should_send = True
+                elif (now - last_send_time) >= 0.25:
+                    should_send = True
+
+                if self.is_connected and should_send:
                     # Format as JSON-RPC message
                     message = {
                         "jsonrpc": "2.0",
@@ -137,15 +147,17 @@ class LeaderMQTTSender:
                         }
                     }
                     payload = json.dumps(message)
-                    self.mqtt_client.publish(self.mqtt_topic, payload)
-                else:
+                    self.mqtt_client.publish(self.mqtt_topic, payload, retain=True)
+                    last_action = action.copy() if hasattr(action, 'copy') else dict(action)
+                    last_send_time = now
+                elif not self.is_connected:
                     logger.warning("Not connected to MQTT, skipping send")
-                
+
                 # Sleep to maintain target FPS
                 elapsed = time.perf_counter() - loop_start
                 sleep_time = max(0, loop_time - elapsed)
                 time.sleep(sleep_time)
-                
+
         except KeyboardInterrupt:
             logger.info("\nKeyboard interrupt received")
         except Exception as e:
@@ -170,9 +182,9 @@ def parse_args():
     p.add_argument("--leader-id", default="so_leader")
     p.add_argument("--mqtt-broker", default="192.168.1.107")
     p.add_argument("--mqtt-port", type=int, default=1883)
-    p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101")
+    p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101/leader")
     p.add_argument("--fps", type=int, default=60)
-    p.add_argument("--use-degrees", action="store_true", default=True)
+    p.add_argument("--use-degrees", action="store_true", default=False)
     return p.parse_args()
 
 

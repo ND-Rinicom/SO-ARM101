@@ -10,11 +10,6 @@ import json
 import time
 import threading
 
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from PIL import Image
-import io
-import os
-
 import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
@@ -81,7 +76,7 @@ class UDP_MQTT_Bridge:
     def _on_connect(self, client, userdata, flags, rc):
         """Called when MQTT connection is established"""
         if rc == 0:
-            client.subscribe(self.mqtt_topic)
+            client.subscribe(self.mqtt_topic+"/#")
             logger.info(f"Connected to MQTT broker at {self.mqtt_broker}:{self.mqtt_port}")
             self.is_connected = True
         else:
@@ -157,9 +152,6 @@ class UDP_MQTT_Bridge:
             self.follower_ip,
             self.follower_port,
         )
-
-        last_follower_servo_positions = None
-        last_sent_time = 0.0
         
         # Main control loop
         try:
@@ -181,19 +173,9 @@ class UDP_MQTT_Bridge:
                                 "params": {"joints": payload.get("joints")},
                                 "timestamp": time.time(),
                             }
-                            self.mqtt_client.publish(self.mqtt_topic, json.dumps(mqtt_msg))
+                            self.mqtt_client.publish(self.mqtt_topic+"/follower", json.dumps(mqtt_msg), retain=True)
                 except socket.error:
-                    # No follower servo data received, send last known servo positions to MQTT for frontend display (if enabled)
-                    now = time.time()
-                    if last_follower_servo_positions and self.is_connected and now - last_sent_time > 1.0: # Send at most once per second
-                        mqtt_msg = {
-                            "jsonrpc": "2.0",
-                            "method": "set_actual_joint_angles",
-                            "params": {"joints": last_follower_servo_positions},
-                            "timestamp": now,
-                        }
-                        self.mqtt_client.publish(self.mqtt_topic, json.dumps(mqtt_msg))
-                        last_sent_time = now
+                    # No follower servo data receive
                     continue
                 except Exception:
                     logger.warning("Invalid UDP JSON payload from follower %s", addr)

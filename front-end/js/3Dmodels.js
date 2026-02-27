@@ -57,14 +57,14 @@ async function loadJointConfig(configPath, modelName) {
   try {
     const response = await fetch(configPath);
     if (!response.ok) {
-      console.warn(`Joint config not found: ${configPath} (status: ${response.status})`);
+      //console.warn(`Joint config not found: ${configPath} (status: ${response.status})`);
       return false;
     }
     jointAxisConfigs[modelName] = await response.json();
-    console.log(`Loaded joint axis configuration for ${modelName}:`, jointAxisConfigs[modelName]);
+    //console.log(`Loaded joint axis configuration for ${modelName}:`, jointAxisConfigs[modelName]);
     return true;
   } catch (error) {
-    console.error("Error loading joint config:", error);
+    //console.error("Error loading joint config:", error);
     return false;
   }
 }
@@ -107,11 +107,11 @@ function getMaterial() {
 
 function loadModel(modelBasePath, modelName = 'follower') {
   const loader = new GLTFLoader();
-  console.log(`Loading model for ${modelName}:`, modelBasePath);
+  //console.log(`Loading model for ${modelName}:`, modelBasePath);
 
   // Validate modelName
   if (modelName !== 'follower' && modelName !== 'leader') {
-    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    //console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
     return Promise.resolve(false);
   }
 
@@ -126,7 +126,7 @@ function loadModel(modelBasePath, modelName = 'follower') {
       fetch(modelPath, { method: 'HEAD' })
         .then(response => {
           if (!response.ok) {
-            console.warn(`Model not found: ${modelPath} (status: ${response.status})`);
+            //console.warn(`Model not found: ${modelPath} (status: ${response.status})`);
             resolve(false);
             return;
           }
@@ -155,7 +155,7 @@ function loadModel(modelBasePath, modelName = 'follower') {
 
             // Apply materials + collect bones
             model.traverse((child) => {
-              console.log(`Model child for ${modelName}:`, child.name, child.type);
+              //console.log(`Model child for ${modelName}:`, child.name, child.type);
               if (child.isMesh) {
                 child.material = material.clone(); // Clone material for independent color control
 
@@ -182,17 +182,17 @@ function loadModel(modelBasePath, modelName = 'follower') {
             scene.add(model);
             
             resolve(true);
-            console.log(`Loaded model for ${modelName}:`, model);
+            //console.log(`Loaded model for ${modelName}:`, model);
           },
           undefined,
           (error) => {
-            console.error(`Error loading model: ${modelPath}`, error);
+            //console.error(`Error loading model: ${modelPath}`, error);
             resolve(false);
           }
         );
       })
       .catch(error => {
-        console.warn(`Failed to check model existence: ${modelPath}`, error);
+        //console.warn(`Failed to check model existence: ${modelPath}`, error);
         resolve(false);
       });
     });
@@ -204,13 +204,13 @@ function loadModel(modelBasePath, modelName = 'follower') {
 // Unload a specific model
 function unloadModel(modelName) {
   if (modelName !== 'follower' && modelName !== 'leader') {
-    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    //console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
     return false;
   }
 
   const model = models[modelName];
   if (!model) {
-    console.warn(`No model loaded for ${modelName}`);
+    //console.warn(`No model loaded for ${modelName}`);
     return false;
   }
 
@@ -223,7 +223,7 @@ function unloadModel(modelName) {
   jointAxisConfigs[modelName] = null;
   models[modelName] = null;
 
-  console.log(`Unloaded model for ${modelName}`);
+  //console.log(`Unloaded model for ${modelName}`);
   renderScene();
   return true;
 }
@@ -231,12 +231,12 @@ function unloadModel(modelName) {
 // Set joint angles for a specific model
 function setJointAngles(jointAngles, modelName) {
   if (modelName !== 'follower' && modelName !== 'leader') {
-    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    //console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
     return;
   }
 
   if (!models[modelName]) {
-    console.warn(`No model loaded for ${modelName}`);
+    //console.warn(`No model loaded for ${modelName}`);
     return;
   }
 
@@ -244,7 +244,7 @@ function setJointAngles(jointAngles, modelName) {
   
   // If no joint config loaded, fall back to old behavior
   if (!jointAxisConfig || !jointAxisConfig.joints) {
-    console.warn(`No joint configuration loaded for ${modelName}, using fallback method`);
+    //console.warn(`No joint configuration loaded for ${modelName}, using fallback method`);
     for (const jointName in jointAngles) {
       const axes = jointAngles[jointName];
       for (const axis in axes) {
@@ -260,7 +260,7 @@ function setJointAngles(jointAngles, modelName) {
       // Get the axis for this joint from config
       const axis = jointAxisConfig.joints[cleanName];
       if (!axis) {
-        console.warn(`No axis configuration found for joint: ${cleanName}`);
+        //console.warn(`No axis configuration found for joint: ${cleanName}`);
         continue;
       }
       
@@ -294,7 +294,7 @@ function setRotation(jointName, axis, valueDeg, modelName) {
   // Bones only (models always have bones)
   const bone = bonesByModelName[modelName].get(jointName);
   if (!bone) {
-    console.warn(`No bone found for jointName: ${jointName} in model ${modelName}`);
+    //console.warn(`No bone found for jointName: ${jointName} in model ${modelName}`);
     return;
   }
 
@@ -303,7 +303,7 @@ function setRotation(jointName, axis, valueDeg, modelName) {
   // Get the initial/rest rotation for this bone
   const initialRot = initialRotationsByModelName[modelName].get(jointName);
   if (!initialRot) {
-    console.warn(`No initial rotation found for: ${jointName} in model ${modelName}`);
+    //console.warn(`No initial rotation found for: ${jointName} in model ${modelName}`);
     return;
   }
 
@@ -319,7 +319,7 @@ function setRotation(jointName, axis, valueDeg, modelName) {
 function setRenderMode(wireframe = false) {
   if(wireframe)
   {
-    console.log("Setting render mode to wireframe");
+    //console.log("Setting render mode to wireframe");
     wireframeMode = true;
   }
 }
@@ -355,13 +355,13 @@ function setModelRotation(xRad = 0, yRad = 0, zRad = 0) {
 // Set the color of a specific model (hex color)
 function setModelColor(modelName, color) {
   if (modelName !== 'follower' && modelName !== 'leader') {
-    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    //console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
     return;
   }
 
   const model = models[modelName];
   if (!model) {
-    console.warn(`No model loaded for ${modelName}`);
+    //console.warn(`No model loaded for ${modelName}`);
     return;
   }
 
@@ -371,20 +371,20 @@ function setModelColor(modelName, color) {
     }
   });
 
-  console.log(`Set color for ${modelName} to ${color.toString(16)}`);
+  ////console.log(`Set color for ${modelName} to ${color.toString(16)}`);
   renderScene();
 }
 
 // Set the transparency of a specific model (opacity 0.0 - 1.0)
 function setModelTransparency(modelName, opacity) {
   if (modelName !== 'follower' && modelName !== 'leader') {
-    console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
+    ////console.error(`Invalid modelName: ${modelName}. Must be 'follower' or 'leader'`);
     return;
   }
 
   const model = models[modelName];
   if (!model) {
-    console.warn(`No model loaded for ${modelName}`);
+    ////console.warn(`No model loaded for ${modelName}`);
     return;
   }
 
@@ -395,7 +395,7 @@ function setModelTransparency(modelName, opacity) {
     }
   });
 
-  console.log(`Set transparency for ${modelName} to ${opacity}`);
+  ////console.log(`Set transparency for ${modelName} to ${opacity}`);
   renderScene();
 }
 
@@ -416,6 +416,8 @@ function setLighting(color = 0xffffff, intensity = 3, x = -1, y = 2, z = 4) {
 }
 
 function renderScene() {
+  // Make the light follow the camera position
+  light.position.copy(camera.position);
   renderer.render(scene, camera);
 }
 
@@ -430,7 +432,6 @@ function setCameraTarget(x = 0, y = 0, z = 0, render = true) {
 function setCameraPose(x = 0, y = 0, z = 1, targetX = 0, targetY = 0, targetZ = 0) {
   cameraTarget.set(targetX, targetY, targetZ);
   camera.position.set(x, y, z);
-  light.position.set(x, y, z);
   camera.lookAt(cameraTarget);
   renderScene();
 }

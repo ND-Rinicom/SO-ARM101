@@ -31,7 +31,7 @@ def parse_args():
     p.add_argument("--bridge-ip", default="192.168.1.107")
     p.add_argument("--bridge-port", type=int, default=9000)
     p.add_argument("--max-relative-target", type=float, default=20.0)
-    p.add_argument("--use-degrees", action="store_true", default=True)
+    p.add_argument("--use-degrees", action="store_true", default=False)
 
     # Optional camera
     p.add_argument("--camera", dest="camera_device", default=None,
@@ -101,7 +101,12 @@ class Follower:
                 except Exception as e:
                     logger.warning("Failed to send present_pos over UDP: %s", e)
 
+            last_sent_pos = present_pos.copy()
+            last_send_time = time.perf_counter()
+
             while stop_event is None or not stop_event.is_set():
+                now = time.perf_counter()
+                sent_this_loop = False
                 try:
                     # Receive instructions from bridge via UDP
                     data, addr = self.follower_sock.recvfrom(1024) # Recive 1024 bytes from bridge
@@ -110,11 +115,26 @@ class Follower:
                     logger.debug(f"Received UDP message with method: {method} from bridge {addr}")
                     if method == "set_follower_joint_angles":
                         self.set_joints(payload)
+                        # After set_joints, send present_pos to bridge (already handled in set_joints)
+                        sent_this_loop = True
+                        last_sent_pos = self.follower.bus.sync_read("Present_Position").copy()
+                        last_send_time = now
                 except socket.error:
                     # No data received, continue waiting
-                    continue
+                    pass
                 except Exception:
                     logger.warning("Invalid UDP JSON payload from bridge %s", addr)
+
+                # Periodic send every 0.25s if not already sent due to leader update
+                if self.follower_feedback:
+                    if not sent_this_loop and (now - last_send_time) >= 0.25:
+                        present_pos = self.follower.bus.sync_read("Present_Position")
+                        try:
+                            self._send_servo_udp(present_pos)
+                            logger.debug(f"Sent present_pos to bridge (periodic): {present_pos}")
+                        except Exception as e:
+                            logger.warning("Failed to send present_pos over UDP: %s", e)
+                        last_send_time = now
         except Exception as e:
             logger.exception(f"Error in UDP socket: {e}")
 
@@ -178,18 +198,29 @@ class CameraStreamer:
                 'sync=false', 'async=false'
         ]
 
-        logger.info(f"Starting GStreamer H.264 pipeline: {' '.join(gst_cmd)}")
-        try:
-            proc = subprocess.Popen(gst_cmd)
-            if stop_event is not None:
-                while not stop_event.is_set():
+        while stop_event is None or not stop_event.is_set():
+            # Add timestamp in hh:mm:ss.s format
+            t = time.localtime()
+            timestamp = f"{t.tm_hour}:{t.tm_min:02}:{t.tm_sec:02}.{int(time.time()%1*10):01}"
+            logger.info(f"[{timestamp}] Starting GStreamer H.264 pipeline: {' '.join(gst_cmd)}")
+            try:
+                proc = subprocess.Popen(gst_cmd)
+                while True:
+                    if stop_event is not None and stop_event.is_set():
+                        logger.info("Stop event set, terminating camera pipeline...")
+                        proc.terminate()
+                        proc.wait()
+                        return
+                    ret = proc.poll()
+                    if ret is not None:
+                        logger.warning(f"Camera pipeline exited with code {ret}. Restarting in 2s...")
+                        proc.wait()
+                        time.sleep(2)
+                        break
                     time.sleep(0.2)
-                proc.terminate()
-                proc.wait()
-            else:
-                proc.wait()
-        except Exception as e:
-            logger.error(f"Error starting GStreamer pipeline: {e}")
+            except Exception as e:
+                logger.error(f"Error starting GStreamer pipeline: {e}. Retrying in 2s...")
+                time.sleep(2)
 
 def main():
     args = parse_args()

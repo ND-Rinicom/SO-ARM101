@@ -58,31 +58,36 @@ export function initCameraControls({
   controls.update();
 
   let lastCameraSend = 0;
+  // Debounce sendCameraUpdate to avoid duplicate messages
+  let debounceTimeout = null;
   function sendCameraUpdate() {
     if (!jsonRpcService || !jsonRpcService.clientId || !modelName) return;
     const now = Date.now();
-    if (now - lastCameraSend < 50) return;
+    if (now - lastCameraSend < 100) return;
     lastCameraSend = now;
 
-    const offset = camera.position.clone().sub(controls.target);
-    const spherical = getSphericalFromOffset(offset);
+    if (debounceTimeout) clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(() => {
+      const offset = camera.position.clone().sub(controls.target);
+      const spherical = getSphericalFromOffset(offset);
 
-    jsonRpcService.sendMessage("watchman_robotarm/" + modelName, {
-      jsonrpc: "2.0",
-      method: "change-camera",
-      params: {
-        clientId: jsonRpcService.clientId,
-        radius: spherical.radius,
-        theta: spherical.theta,
-        phi: spherical.phi,
-        camX: camera.position.x,
-        camY: camera.position.y,
-        camZ: camera.position.z,
-        targetX: controls.target.x,
-        targetY: controls.target.y,
-        targetZ: controls.target.z
-      }
-    });
+      jsonRpcService.sendMessage("watchman_robotarm/" + modelName + "/frontend-camera", {
+        id: null, // let the service assign an id
+        method: "change-camera",
+        params: {
+          radius: spherical.radius,
+          theta: spherical.theta,
+          phi: spherical.phi,
+          camX: camera.position.x,
+          camY: camera.position.y,
+          camZ: camera.position.z,
+          targetX: controls.target.x,
+          targetY: controls.target.y,
+          targetZ: controls.target.z,
+          clientId: jsonRpcService.clientId
+        }
+      });
+    }, 80); // Only send after 80ms of inactivity
   }
 
   function renderFrame() {
@@ -110,7 +115,7 @@ export function initCameraControls({
     );
     controls.update();
     renderFrame();
-    sendCameraUpdate();
+    //sendCameraUpdate();
   }
 
   function onControlsChange() {
@@ -180,7 +185,7 @@ export function initCameraControls({
 
     controls.target.copy(target);
     setCameraPose(x, y, z, target.x, target.y, target.z);
-    controls.update();
+    //controls.update();
     renderFrame();
   }
 

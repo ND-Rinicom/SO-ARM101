@@ -97,7 +97,7 @@ Promise.all([
     setModelColor('leader', 0xffffff); // White for leader
   }
 
-  const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName);
+  const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName +"/#");
 
   const cameraController = initCameraControls({
     jsonRpcService,
@@ -105,9 +105,15 @@ Promise.all([
     cameraZPos
   });
 
+  let followerIsRed = false;
+  let leaderIsRed = false;
+  let lastFollowerTimestamp = null;
+  let lastLeaderTimestamp = null;
+
   // Handle inbound method calls (server -> client)
   jsonRpcService.onMethodCalled = function(topic, message) {
     const method = message.method;
+    //console.log('Received method call:', method, 'with Timestamp:', message.timestamp);
 
     if (method === "finger") {
       jsonRpcService.sendMessage('watchman_robotarm', {
@@ -117,10 +123,14 @@ Promise.all([
       });
     } else if (method === "set_follower_joint_angles") {
       const joints = message.params?.joints || {};
+      const timestamp = Date.parse(message.timestamp);
+      lastLeaderTimestamp = timestamp;
       setJointAngles(joints, 'leader');
       return;
     } else if (method === "set_actual_joint_angles") {
       const joints = message.params?.joints || {};
+      const timestamp = message.timestamp;
+      lastFollowerTimestamp = timestamp;
       setJointAngles(joints, 'follower');
       return;
     } else if (method === "change-camera") {
@@ -149,6 +159,32 @@ Promise.all([
     setLeaderJointAngles: (joints) => setJointAngles(joints, 'leader')
   };
   console.log('Robot control functions available at window.robotControl');
+
+  // Periodically check if last message is older than 5 seconds and update color
+  setInterval(() => {
+    const now = Date.now();
+    // Follower
+    if (lastFollowerTimestamp && (now - lastFollowerTimestamp*1000 > 5000)) {
+      if (!followerIsRed) {
+        setModelColor('follower', 0xff0000);
+        followerIsRed = true;
+      }
+    } else if (followerIsRed) {
+      setModelColor('follower', 0x88ccff);
+      followerIsRed = false;
+    }
+    // Leader
+    if (lastLeaderTimestamp && (now - lastLeaderTimestamp > 5000)) {
+      if (!leaderIsRed) {
+        console.log('Leader data is stale, changing color to red');
+        setModelColor('leader', 0xff0000);
+        leaderIsRed = true;
+      }
+    } else if (leaderIsRed) {
+      setModelColor('leader', 0xffffff);
+      leaderIsRed = false;
+    }
+  }, 1000);
 });
     </script>
   </body>
