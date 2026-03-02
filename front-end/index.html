@@ -1,3 +1,7 @@
+// Model position (xPos, yPos, zPos)
+const xPos = urlParams.has('xPos') ? parseFloat(urlParams.get('xPos')) : 0;
+const yPos = urlParams.has('yPos') ? parseFloat(urlParams.get('yPos')) : 0;
+const zPos = urlParams.has('zPos') ? parseFloat(urlParams.get('zPos')) : 0;
 <!-- 
 index.html
 Has URL parameters to configure model and positions
@@ -5,6 +9,7 @@ Has URL parameters to configure model and positions
 - xPos, yPos, zPos:   Model position coordinates (default: 0.0,0.0,0.0)
 - cameraZPos:         Camera Z position (default: 7.0) 
 - wireframe:          Render mode (0 = ghost, 1 = wireframe) (default: 0)
+- debug:              Enable debug mode to show console logs in an overlay (0 or 1, default: 0)
 -->
 
 <!DOCTYPE html>
@@ -43,6 +48,7 @@ Has URL parameters to configure model and positions
     </style>
   </head>
   <body>
+    <div id="debug-log" style="display:none; position:fixed; top:0; left:0; width:100vw; max-height:30vh; overflow:auto; background:rgba(0,0,0,0.95); color:#0f0; font-family:monospace; font-size:14px; z-index:2147483647; padding:8px 12px 8px 12px; box-sizing:border-box; border-bottom:2px solid #0f0; pointer-events:none;"></div>
     <script src="js/mqtt/mqtt.min.js"></script>
 	  <script src="js/mqtt/jsonrpcovermqtt.js"></script>
     <script type="module">
@@ -53,6 +59,29 @@ Has URL parameters to configure model and positions
 const url = new URL(window.location.href);
 const urlParams = new URLSearchParams(url.search);
 
+// Debug flag from URL
+const debugMode = urlParams.has('debug') && (urlParams.get('debug') === '1' || urlParams.get('debug') === 'true');
+if (debugMode) {
+  const debugDiv = document.getElementById('debug-log');
+  debugDiv.style.display = 'block';
+  // Patch console.log, console.warn, console.error
+  ["log", "warn", "error"].forEach(fn => {
+    const orig = console[fn];
+    console[fn] = function(...args) {
+      orig.apply(console, args);
+      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 1) : String(a)).join(' ');
+      const color = fn === 'error' ? '#f44' : (fn === 'warn' ? '#ff0' : '#0f0');
+      const span = document.createElement('div');
+      span.style.color = color;
+      span.textContent = `[${fn}] ${msg}`;
+      debugDiv.appendChild(span);
+      debugDiv.scrollTop = debugDiv.scrollHeight;
+    };
+  });
+  // Test log to confirm debug panel is working
+  console.log('Debug mode enabled: console logs will appear here.');
+}
+
 // Model name (base name without extension)
 let modelName = 'so-101'; // default
 if (urlParams.has('model')) {
@@ -62,16 +91,13 @@ if (urlParams.has('model')) {
     modelName = modelName.slice(0, -4);
   }
 }
-// Model position (xPos, yPos, zPos)
-const xPos = urlParams.has('xPos') ? parseFloat(urlParams.get('xPos')) : 0;
-const yPos = urlParams.has('yPos') ? parseFloat(urlParams.get('yPos')) : 0;
-const zPos = urlParams.has('zPos') ? parseFloat(urlParams.get('zPos')) : 0;
 
 // Camera Z position
 const cameraZPos = urlParams.has('cameraZPos') ? parseFloat(urlParams.get('cameraZPos')) : 1;
 
 // Render mode: wireframe or ghost
 const renderModeParam = urlParams.get('wireframe') || 0;
+
 
 // Apply settings
 setModelPosition(xPos, yPos, zPos);
@@ -90,10 +116,12 @@ Promise.all([
 
   // Set different colors for each model (optional - can be customized via exposed functions)
   if (followerLoaded) {
+    console.log('Follower model '+ modelName +' loaded successfully');
     setModelColor('follower', 0x88ccff); // Light blue for follower
     setModelTransparency('follower', 0.8); 
   }
   if (leaderLoaded) {
+    console.log('Leader model '+ modelName +' loaded successfully');
     setModelColor('leader', 0xffffff); // White for leader
   }
 

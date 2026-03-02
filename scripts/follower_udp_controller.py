@@ -93,15 +93,19 @@ class Follower:
             self.follower_sock.settimeout(0)
 
             # Send initial servo positions to bridge for frontend display (if enabled)
-            present_pos = self.follower.bus.sync_read("Present_Position")
-            if self.follower_feedback:
+            try:
+                present_pos = self.follower.bus.sync_read("Present_Position")
+            except Exception as e:
+                logger.error(f"Failed to sync read 'Present_Position': {e}")
+                present_pos = None
+            if self.follower_feedback and present_pos is not None:
                 try:
                     self._send_servo_udp(present_pos)
                     logger.debug(f"Sent present_pos to bridge: {present_pos}")
                 except Exception as e:
                     logger.warning("Failed to send present_pos over UDP: %s", e)
 
-            last_sent_pos = present_pos.copy()
+            # last_sent_pos = present_pos.copy() if present_pos is not None else {}
             last_send_time = time.perf_counter()
 
             while stop_event is None or not stop_event.is_set():
@@ -112,12 +116,12 @@ class Follower:
                     data, addr = self.follower_sock.recvfrom(1024) # Recive 1024 bytes from bridge
                     payload = json.loads(data.decode("utf-8"))
                     method = payload.get("method")
-                    logger.debug(f"Received UDP message with method: {method} from bridge {addr}")
+                    #logger.debug(f"Received UDP message with method: {method} from bridge {addr}")
                     if method == "set_follower_joint_angles":
                         self.set_joints(payload)
                         # After set_joints, send present_pos to bridge (already handled in set_joints)
                         sent_this_loop = True
-                        last_sent_pos = self.follower.bus.sync_read("Present_Position").copy()
+                        # last_sent_pos = self.follower.bus.sync_read("Present_Position").copy()
                         last_send_time = now
                 except socket.error:
                     # No data received, continue waiting
@@ -128,13 +132,18 @@ class Follower:
                 # Periodic send every 0.25s if not already sent due to leader update
                 if self.follower_feedback:
                     if not sent_this_loop and (now - last_send_time) >= 0.25:
-                        present_pos = self.follower.bus.sync_read("Present_Position")
                         try:
-                            self._send_servo_udp(present_pos)
-                            logger.debug(f"Sent present_pos to bridge (periodic): {present_pos}")
+                            present_pos = self.follower.bus.sync_read("Present_Position")
                         except Exception as e:
-                            logger.warning("Failed to send present_pos over UDP: %s", e)
-                        last_send_time = now
+                            logger.error(f"Failed to sync read 'Present_Position': {e}")
+                            present_pos = None
+                        if present_pos is not None:
+                            try:
+                                self._send_servo_udp(present_pos)
+                                #logger.debug(f"Sent present_pos to bridge (periodic): {present_pos}")
+                            except Exception as e:
+                                logger.warning("Failed to send present_pos over UDP: %s", e)
+                            last_send_time = now
         except Exception as e:
             logger.exception(f"Error in UDP socket: {e}")
 
@@ -150,24 +159,29 @@ class Follower:
         }
 
         # Read current servo positions
-        present_pos = self.follower.bus.sync_read("Present_Position")
+        try:
+            present_pos = self.follower.bus.sync_read("Present_Position")
+        except Exception as e:
+            logger.error(f"Failed to sync read 'Present_Position': {e}")
+            present_pos = None
 
         # Send current positions to bridge for frontend display (if enabled)
-        if self.follower_feedback:
+        if self.follower_feedback and present_pos is not None:
             try:
                 self._send_servo_udp(present_pos)
-                logger.debug(f"Sent present_pos to bridge: {present_pos}")
+                #logger.debug(f"Sent present_pos to bridge: {present_pos}")
             except Exception as e:
                 logger.warning("Failed to send present_pos over UDP: %s", e)
         
         # Ensure the goal position is within the max_relative_target of the current position
-        if self.max_relative_target is not None:
+        if present_pos is not None and self.max_relative_target is not None:
             goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in goal_pos.items()}
             safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.max_relative_target)
         else:
             safe_goal_pos = goal_pos
 
         # Send safe goal position to follower
+        logger.debug(f"Sending safe_goal_pos to follower: { {f'{motor}.pos': val for motor, val in safe_goal_pos.items()} }")
         self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
 
 class CameraStreamer:

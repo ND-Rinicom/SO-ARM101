@@ -40,13 +40,13 @@ class JsonRpcService {
       console.error("All messages must be objects!", message);
       return;
     }
-    // if (message["id"] === undefined) {
-    //   // Message is a notification id not needed
-    //   // console.warn("Message has no id, treating as notification (no response expected)");
-    //   console.warn("Message has no id, treating as notification (no response expected)", message);
-    //   this.mqtt_conn.publish(topic, JSON.stringify(message));
-    //   return;
-    // }
+    if (message["id"] === undefined) {
+      // Message is a notification id not needed
+      // console.warn("Message has no id, treating as notification (no response expected)");
+      console.warn("Message has no id, treating as notification (no response expected)", message);
+      this.mqtt_conn.publish(topic, JSON.stringify(message));
+      return;
+    }
     if (message["method"] === undefined) {
       // this message is a response, not a method call and so does not expect a
       // response
@@ -102,7 +102,7 @@ class JsonRpcService {
   }
 
   receiveMessage(topic, message) {
-    console.log("Got Message", topic, this.connected_uri);
+    //console.log("Got Message", topic, this.connected_uri);
     message = JSON.parse(message.toString());
 
     if (message.length !== undefined) {

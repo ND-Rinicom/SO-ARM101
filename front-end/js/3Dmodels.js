@@ -272,7 +272,7 @@ function setJointAngles(jointAngles, modelName) {
         angle = -((angle / 100) * 127);
       }
       else if (cleanName === "wrist_roll") {
-        angle = -angle;
+        angle = -angle-90;
       }
       
       // Set the rotation
