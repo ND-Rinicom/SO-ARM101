@@ -1,8 +1,13 @@
-
 <!-- 
 index.html
 Has URL parameters to configure model and positions
 - model:              3D model filename (default: so-101.glb)
+- follower:           Load follower model (0 or 1, default: 1)
+- leader:             Load leader model (0 or 1, default: 1)
+- followerColor:      Hex color for follower model (default: 0x88ccff)
+- leaderColor:        Hex color for leader model (default: 0xffffff)
+- followerOpacity:    Opacity for follower model (default: 0.8)
+- leaderOpacity:      Opacity for leader model (default: 1.0)
 - xPos, yPos, zPos:   Model position coordinates (default: 0.0,0.0,0.0)
 - cameraZPos:         Camera Z position (default: 7.0) 
 - wireframe:          Render mode (0 = ghost, 1 = wireframe) (default: 0)
@@ -61,6 +66,23 @@ const xPos = urlParams.has('xPos') ? parseFloat(urlParams.get('xPos')) : 0;
 const yPos = urlParams.has('yPos') ? parseFloat(urlParams.get('yPos')) : 0;
 const zPos = urlParams.has('zPos') ? parseFloat(urlParams.get('zPos')) : 0;
 
+// New parameters for model control
+const loadFollower = !urlParams.has('follower') || urlParams.get('follower') === '1' || urlParams.get('follower') === 'true';
+const loadLeader = !urlParams.has('leader') || urlParams.get('leader') === '1' || urlParams.get('leader') === 'true';
+
+function parseHexColor(val, fallback) {
+  if (!val) return fallback;
+  if (typeof val === 'string' && val.startsWith('0x')) return parseInt(val, 16);
+  if (typeof val === 'string' && val.startsWith('#')) return parseInt(val.slice(1), 16);
+  const n = Number(val);
+  return isNaN(n) ? fallback : n;
+}
+
+const followerColor = parseHexColor(urlParams.get('followerColor'), 0x88ccff);
+const leaderColor = parseHexColor(urlParams.get('leaderColor'), 0xffffff);
+const followerOpacity = urlParams.has('followerOpacity') ? parseFloat(urlParams.get('followerOpacity')) : 0.8;
+const leaderOpacity = urlParams.has('leaderOpacity') ? parseFloat(urlParams.get('leaderOpacity')) : 1.0;
+
 // Debug flag from URL
 const debugMode = urlParams.has('debug') && (urlParams.get('debug') === '1' || urlParams.get('debug') === 'true');
 if (debugMode) {
@@ -105,26 +127,30 @@ const renderModeParam = urlParams.get('wireframe') || 0;
 setModelPosition(xPos, yPos, zPos);
 setRenderMode(renderModeParam == 1);
 
-// Load both models
+// Load models as per parameters
 const modelPath = './models/' + modelName;
-Promise.all([
-  loadModel(modelPath, 'follower'),
-  loadModel(modelPath, 'leader')
-]).then(([followerLoaded, leaderLoaded]) => {
+const loadPromises = [];
+if (loadFollower) loadPromises.push(loadModel(modelPath, 'follower'));
+else loadPromises.push(Promise.resolve(false));
+if (loadLeader) loadPromises.push(loadModel(modelPath, 'leader'));
+else loadPromises.push(Promise.resolve(false));
+
+Promise.all(loadPromises).then(([followerLoaded, leaderLoaded]) => {
   if (!followerLoaded && !leaderLoaded) {
     console.warn('Both models failed to load, skipping MQTT initialization');
     return;
   }
 
-  // Set different colors for each model (optional - can be customized via exposed functions)
+  // Set different colors and opacities for each model (customizable via URL)
   if (followerLoaded) {
     console.log('Follower model '+ modelName +' loaded successfully');
-    setModelColor('follower', 0x88ccff); // Light blue for follower
-    setModelTransparency('follower', 0.8); 
+    setModelColor('follower', followerColor);
+    setModelTransparency('follower', followerOpacity);
   }
   if (leaderLoaded) {
     console.log('Leader model '+ modelName +' loaded successfully');
-    setModelColor('leader', 0xffffff); // White for leader
+    setModelColor('leader', leaderColor);
+    setModelTransparency('leader', leaderOpacity);
   }
 
   const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName +"/#");
@@ -143,21 +169,19 @@ Promise.all([
   // Handle inbound method calls (server -> client)
   jsonRpcService.onMethodCalled = function(topic, message) {
     const method = message.method;
-    //console.log('Received method call:', method, 'with Timestamp:', message.timestamp);
-
     if (method === "finger") {
       jsonRpcService.sendMessage('watchman_robotarm', {
         jsonrpc: "2.0",
         id: message.id,
         result: jsonRpcService.clientId
       });
-    } else if (method === "set_follower_joint_angles") {
+    } else if (method === "set_follower_joint_angles" && leaderLoaded) {
       const joints = message.params?.joints || {};
       const timestamp = Date.parse(message.timestamp);
       lastLeaderTimestamp = timestamp;
       setJointAngles(joints, 'leader');
       return;
-    } else if (method === "set_actual_joint_angles") {
+    } else if (method === "set_actual_joint_angles" && followerLoaded) {
       const joints = message.params?.joints || {};
       const timestamp = message.timestamp;
       lastFollowerTimestamp = timestamp;
@@ -194,25 +218,29 @@ Promise.all([
   setInterval(() => {
     const now = Date.now();
     // Follower
-    if (lastFollowerTimestamp && (now - lastFollowerTimestamp*1000 > 5000)) {
-      if (!followerIsRed) {
-        setModelColor('follower', 0xff0000);
-        followerIsRed = true;
+    if (followerLoaded) {
+      if (lastFollowerTimestamp && (now - lastFollowerTimestamp*1000 > 5000)) {
+        if (!followerIsRed) {
+          setModelColor('follower', 0xff0000);
+          followerIsRed = true;
+        }
+      } else if (followerIsRed) {
+        setModelColor('follower', followerColor);
+        followerIsRed = false;
       }
-    } else if (followerIsRed) {
-      setModelColor('follower', 0x88ccff);
-      followerIsRed = false;
     }
     // Leader
-    if (lastLeaderTimestamp && (now - lastLeaderTimestamp > 5000)) {
-      if (!leaderIsRed) {
-        console.log('Leader data is stale, changing color to red');
-        setModelColor('leader', 0xff0000);
-        leaderIsRed = true;
+    if (leaderLoaded) {
+      if (lastLeaderTimestamp && (now - lastLeaderTimestamp > 5000)) {
+        if (!leaderIsRed) {
+          console.log('Leader data is stale, changing color to red');
+          setModelColor('leader', 0xff0000);
+          leaderIsRed = true;
+        }
+      } else if (leaderIsRed) {
+        setModelColor('leader', leaderColor);
+        leaderIsRed = false;
       }
-    } else if (leaderIsRed) {
-      setModelColor('leader', 0xffffff);
-      leaderIsRed = false;
     }
   }, 1000);
 });
