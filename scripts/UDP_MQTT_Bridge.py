@@ -18,7 +18,7 @@ from gi.repository import Gst
 import paho.mqtt.client as mqtt
 
 # Basic Logging set up
-logging.basicConfig(level=logging.INFO,
+logging.basicConfig(level=logging.DEBUG,
                     format= "%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -102,6 +102,7 @@ class UDP_MQTT_Bridge:
             return
 
         logger.debug("Forwarding target to follower via UDP: %s:%d", self.follower_ip, self.follower_port)
+        logger.debug(f"MQTT message payload: {payload}")
         self.bridge_sock.sendto(
             payload.encode("utf-8"),
             (self.follower_ip, self.follower_port),

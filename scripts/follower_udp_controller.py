@@ -12,6 +12,7 @@ import time
 import sys
 from pathlib import Path
 import threading
+from datetime import datetime
 
 # Add parent directory to path to import lerobot
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -105,7 +106,7 @@ class Follower:
             if self.follower_feedback and present_pos is not None:
                 try:
                     self._send_servo_udp(present_pos)
-                    logger.debug(f"Sent present_pos to bridge: {present_pos}")
+                    #logger.debug(f"Sent present_pos to bridge: {present_pos}")
                 except Exception as e:
                     logger.warning("Failed to send present_pos over UDP: %s", e)
 
@@ -118,18 +119,26 @@ class Follower:
             set_joints_thread.start()
             logger.debug("set_joints thread started")
 
+            last_msg_timestamp = None
             while stop_event is None or not stop_event.is_set():
                 now = time.perf_counter()
                 try:
                     # Receive instructions from bridge via UDP
                     data, addr = self.follower_sock.recvfrom(1024) # Recive 1024 bytes from bridge
                     payload = json.loads(data.decode("utf-8"))
+
+                    # Process only set_follower_joint_angles method for controlling the follower arm
                     method = payload.get("method")
-                    #logger.debug(f"Received UDP message with method: {method} from bridge {addr}")
                     if method == "set_follower_joint_angles":
-                        self.set_goal_position(payload)
-                        #logger.debug(f"Updated goal_pos from bridge: {self.goal_pos}")
-                        self.last_send_time = now
+                        # Only process if message has a newer timestamp than last due to UDP unreliability
+                        if payload.get("timestamp") and (last_msg_timestamp is None or datetime.fromisoformat(payload.get("timestamp")) > last_msg_timestamp):
+                            self.set_goal_position(payload)
+                            logger.debug(f"Updated goal_pos from bridge: {self.goal_pos}")
+                            last_msg_timestamp = datetime.fromisoformat(payload.get("timestamp", last_msg_timestamp))
+                            logger.debug(f"Last message timestamp updated to: {last_msg_timestamp}")
+                            self.last_send_time = now
+                        else:
+                            logger.debug(f"Ignoring out-of-order UDP message from bridge {addr} with timestamp {payload.get('timestamp')}")
                 except socket.error:
                     # No data received, continue waiting
                     pass
@@ -167,8 +176,10 @@ class Follower:
 
     def set_joints(self, stop_event=None):
         while (stop_event is None or not stop_event.is_set()):
-            logger.debug(f"set_joints loop iteration with goal_pos: {self.goal_pos}")
-            # Check that goal_pos is set before trying to move follower
+            #logger.debug(f"set_joints loop iteration with goal_pos: {self.goal_pos}")
+            min_step = 2.0  # degrees, minimum step for smoothness
+            max_step = self.max_relative_target # degrees, maximum step for responsiveness
+            k = 0.5         # scaling factor for adaptive step
             if not self.goal_pos:
                 time.sleep(0.05)
                 continue
@@ -191,19 +202,33 @@ class Follower:
                 try:
                     self._send_servo_udp(present_pos)
                     self.last_send_time = time.perf_counter()
-                    logger.debug(f"Sent present_pos to bridge: {present_pos}")
+                    #logger.debug(f"Sent present_pos to bridge: {present_pos}")
                 except Exception as e:
                     logger.warning("Failed to send present_pos over UDP: %s", e)
             
-            # Ensure the goal position is within the max_relative_target of the current position
-            if present_pos is not None and self.max_relative_target is not None:
-                goal_present_pos = {key: (g_pos, present_pos[key]) for key, g_pos in self.goal_pos.items()}
-                safe_goal_pos = ensure_safe_goal_position(goal_present_pos, self.max_relative_target)
-            else:
-                safe_goal_pos = self.goal_pos
+                adaptive_steps = {}
+                if present_pos is not None:
+                    for key, g_pos in self.goal_pos.items():
+                        c_pos = present_pos.get(key, g_pos)
+                        diff = abs(g_pos - c_pos)
+                        step = min(max(k * diff, min_step), max_step)
+                        adaptive_steps[key] = step
+
+                    # Build per-joint safe goal positions
+                    safe_goal_pos = {}
+                    for key, g_pos in self.goal_pos.items():
+                        c_pos = present_pos.get(key, g_pos)
+                        # Clamp the movement to the adaptive step
+                        if abs(g_pos - c_pos) > adaptive_steps[key]:
+                            direction = 1 if g_pos > c_pos else -1
+                            safe_goal_pos[key] = c_pos + direction * adaptive_steps[key]
+                        else:
+                            safe_goal_pos[key] = g_pos
+                else:
+                    safe_goal_pos = self.goal_pos
 
             # Send safe goal position to follower
-            logger.debug(f"Sending safe_goal_pos to follower: { {f'{motor}.pos': val for motor, val in safe_goal_pos.items()} }")
+            # logger.debug(f"Sending safe_goal_pos to follower: { {f'{motor}.pos': val for motor, val in safe_goal_pos.items()} }")
             self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
 
             # Sleep to avoid overwhelming the bus
