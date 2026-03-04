@@ -33,10 +33,10 @@ class LeaderMQTTSender:
         self,
         leader_port: str = "/dev/ttyACM0",
         leader_id: str = "so_leader",
-        mqtt_broker: str = "192.168.1.107",
+        mqtt_broker: str = "0.0.0.0",
         mqtt_port: int = 1883,
         mqtt_topic: str = "watchman_robotarm/so-101/leader",
-        fps: int = 60,
+        fps: int = 24,
         use_degrees: bool = True,
     ):
         """
@@ -180,10 +180,10 @@ def parse_args():
     p = argparse.ArgumentParser(description="SO-ARM101 leader sender (MQTT).")
     p.add_argument("--leader-port", default="/dev/ttyACM0")
     p.add_argument("--leader-id", default="so_leader")
-    p.add_argument("--mqtt-broker", default="192.168.1.107")
+    p.add_argument("--mqtt-broker", default="0.0.0.0")
     p.add_argument("--mqtt-port", type=int, default=1883)
     p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101/leader")
-    p.add_argument("--fps", type=int, default=60)
+    p.add_argument("--fps", type=int, default=24)
     p.add_argument("--use-degrees", action="store_true", default=False)
     return p.parse_args()
 

@@ -64,6 +64,27 @@ sudo apt install mosquitto mosquitto-clients
 sudo systemctl start mosquitto
 ```
 
+### 7. Set UDP priorities (optional)
+
+If wanting communication from the laptop (leader) to pi (follower) via UDP its a good idea to set the servo comunications as higher priority than the video stream as video packets droping is much better.
+
+On the pi cmd 
+```bash
+# Wipe existing rules
+sudo tc qdisc del dev eth0 root
+
+# Rebuild with pfifo on robot band
+sudo tc qdisc add dev eth0 root handle 1: prio
+sudo tc qdisc add dev eth0 parent 1:1 handle 10: pfifo
+sudo tc qdisc add dev eth0 parent 1:2 handle 20: tbf rate 2mbit burst 32kbit latency 50ms
+
+# Reapply filters
+sudo tc filter add dev eth0 protocol ip parent 1:0 prio 1 u32 \
+    match ip dport 9000 0xffff flowid 1:1
+sudo tc filter add dev eth0 protocol ip parent 1:0 prio 2 u32 \
+    match ip dport 5000 0xffff flowid 1:2
+```
+
 ## Usage
 
 ### 1. Start Follower Controller (on Raspberry Pi)
@@ -78,16 +99,12 @@ Optional command-line parameters (with comments):
 python scripts/follower_mqtt_controller.py \
   --follower-port /dev/ttyACM0 \            # Serial port for the follower arm
   --follower-id so_follower \               # Calibration ID for the follower arm
-  --mqtt-broker 192.168.1.107 \             # MQTT broker IP or hostname
+  --mqtt-broker 0.0.0.0 \                   # MQTT broker IP or hostname
   --mqtt-port 1883 \                        # MQTT broker port
   --mqtt-topic watchman_robotarm/so-101 \   # MQTT topic for joint commands
-  --max-relative-target 20.0 \              # Max per-step joint change (safety clamp)
-  --camera /dev/video0 \                    # Start ustreamer with this camera device
-  --cam-host 0.0.0.0 \                      # Bind address for ustreamer
-  --cam-port 8080 \                         # Port for ustreamer
-  --cam-res 640x480 \                       # Camera resolution for ustreamer
-  --http-server 8001 \                      # Start Python HTTP server on this port
-  --http-dir ~                              # Directory to serve with HTTP server
+  --max-relative-target 20.0 \              # Max per-step joint change
+  --fps 24 \                                # Target send frequency
+  --use-degrees                             # Use degrees instead of radians
 ```
 
 You should see:
@@ -111,14 +128,15 @@ python scripts/leader_mqtt_sender.py \
   --mqtt-broker 192.168.1.107 \             # MQTT broker IP or hostname
   --mqtt-port 1883 \                        # MQTT broker port
   --mqtt-topic watchman_robotarm/so-101 \   # MQTT topic for joint commands
-  --fps 60                                  # Control loop frequency (Hz)
+  --fps 24                                  # Control loop frequency (Hz)
+  --use-degrees
 ```
 
 You should see:
 ```
 Leader arm connected
 Connected to MQTT broker
-Leader sender started at 60 FPS
+Leader sender started at 24 FPS
 Move the leader arm to control the follower
 ```
 

@@ -57,9 +57,34 @@ Has URL parameters to configure model and positions
     import { loadModel, unloadModel, setJointAngles, setModelPosition, setRenderMode, setModelColor, setModelTransparency } from '/js/3Dmodels.js';
     import { initCameraControls } from '/js/cameraControls.js';
 
-// Extract parameters from URL
-const url = new URL(window.location.href);
-const urlParams = new URLSearchParams(url.search);
+// Extract parameters from URL and fragment
+function getAllParams() {
+  const url = new URL(window.location.href);
+  // Get query params
+  const queryParams = new URLSearchParams(url.search);
+  // Get fragment params (after #)
+  let hashParams = new URLSearchParams();
+  if (window.location.hash && window.location.hash.startsWith('#')) {
+    // Remove leading # and possible leading ?
+    let hash = window.location.hash.slice(1);
+    if (hash.startsWith('?')) hash = hash.slice(1);
+    hashParams = new URLSearchParams(hash);
+  }
+  // Merge: fragment params override query params
+  const allParams = new Map();
+  for (const [key, value] of queryParams.entries()) {
+    allParams.set(key, value);
+  }
+  for (const [key, value] of hashParams.entries()) {
+    allParams.set(key, value);
+  }
+  return {
+    has: (k) => allParams.has(k),
+    get: (k) => allParams.get(k)
+  };
+}
+
+const urlParams = getAllParams();
 
 // Model position (xPos, yPos, zPos)
 const xPos = urlParams.has('xPos') ? parseFloat(urlParams.get('xPos')) : 0;
@@ -153,7 +178,8 @@ Promise.all(loadPromises).then(([followerLoaded, leaderLoaded]) => {
     setModelTransparency('leader', leaderOpacity);
   }
 
-  const jsonRpcService = new JsonRpcService('ws://' + url.hostname + ':9000', 'watchman_robotarm/' + modelName +"/#");
+  const urlObj = new URL(window.location.href);
+  const jsonRpcService = new JsonRpcService('ws://' + urlObj.hostname + ':9000', 'watchman_robotarm/' + modelName +"/#");
 
   const cameraController = initCameraControls({
     jsonRpcService,
