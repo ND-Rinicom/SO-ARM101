@@ -124,10 +124,10 @@ The page connects to a JSON-RPC-over-WebSocket endpoint at `ws://<IP_ADDR>:9000`
 
 Optional URL parameters
 ```
-index.html?#leader=0&followerColor=0xff69b4 # Pink follower arm only
+index.html#?leader=0&followerColor=0xff69b4 # Pink follower arm only
 
 # Supported params:
-?#model=so-101               # Model name (accepts so-101 or so-101.glb)
+#?model=so-101               # Model name (accepts so-101 or so-101.glb)
 &follower=1                  # Show follower model (0 or 1)
 &leader=1                    # Show leader model (0 or 1)
 &followerColor=0x88ccff      # 0xRRGGBB or #RRGGBB

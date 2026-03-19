@@ -86,8 +86,8 @@ function getAllParams() {
 
 const urlParams = getAllParams();
 
-const camX = urlParams.has('camX') ? parseFloat(urlParams.get('camX')) : 0;
-const camY = urlParams.has('camY') ? parseFloat(urlParams.get('camY')) : 0;
+const camX = urlParams.has('camX') ? parseFloat(urlParams.get('camX')) : 3;
+const camY = urlParams.has('camY') ? parseFloat(urlParams.get('camY')) : -1;
 const camZ = urlParams.has('camZ') ? parseFloat(urlParams.get('camZ')) : 0;
 
 const camTargetX = urlParams.has('camTargetX') ? parseFloat(urlParams.get('camTargetX')) : 0;
