@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-UDP-controlled SO-ARM101 Follower with Jump Protection
+MQTT-controlled SO-ARM101 Follower with Jump Protection
 Run this on the Raspberry Pi connected to the follower arm
 """
 
 import json
-import socket
 import logging
 import argparse
 import time
@@ -14,11 +13,12 @@ from pathlib import Path
 import threading
 from datetime import datetime
 
+import paho.mqtt.client as mqtt  # type: ignore[import-not-found]
+
 # Add parent directory to path to import lerobot
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
-from lerobot.robots.robot import ensure_safe_goal_position
 
 # Basic Logging set up
 logging.basicConfig(level=logging.INFO,
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 class Follower:
     """
-    SO-ARM101 Follower controlled via UDP messages from bridge
+    SO-ARM101 Follower controlled via MQTT messages from leader.py
     Run this on the Raspberry Pi connected to the follower arm
     """
 
@@ -35,9 +35,11 @@ class Follower:
         self,
         follower_port: str = "/dev/ttyACM0",
         follower_id: str = "so_follower",
-        bridge_ip: str = "192.168.1.107",
-        bridge_port: int = 9000,
+        mqtt_broker_ip: str = "192.168.1.107",
+        mqtt_broker_port: int = 1883,
+        mqtt_topic: str = "watchman_robotarm/so-101",
         max_relative_target: float = 20.0,
+        control_fps: int = 30,
         idle_send_interval: float = 0.25,
         follower_feedback: bool = True,
     ):
@@ -50,29 +52,80 @@ class Follower:
         )
         self.follower = SO101Follower(follower_config)
         self.max_relative_target = max_relative_target
+        self.control_fps = max(1, int(control_fps))
 
-        # UDP bridge config
-        self.follower_sock = None
-        self.bridge_ip = bridge_ip
-        self.bridge_port = bridge_port
-        self.follower_feedback = follower_feedback # Whether to send current servo positions back to bridge for frontend display
+        # MQTT config
+        self.mqtt_broker_ip = mqtt_broker_ip
+        self.mqtt_broker_port = int(mqtt_broker_port)
+        self.mqtt_topic = mqtt_topic
+        self.follower_feedback = follower_feedback  # Whether to publish current servo positions for frontend display
         self.idle_send_interval = max(0.0, float(idle_send_interval))
+
+        self._mqtt_client: mqtt.Client | None = None
+        self._mqtt_connected = threading.Event()
 
         self.is_running = False
 
-        self.last_send_time = 0
+        self.last_send_time = 0.0
 
         self.goal_pos = {}
+        self._goal_pos_lock = threading.Lock()
+        self._last_cmd_timestamp: datetime | None = None
+        self._bus_lock = threading.Lock()
 
-    def _send_servo_udp(self, present_pos: dict) -> None:
-        payload = json.dumps(
-            {
-                "method": "servo_positions",
-                "timestamp": time.time(),
-                "joints": {f"{k}.pos": v for k, v in present_pos.items()},
-            }
-        ).encode("utf-8")
-        self.follower_sock.sendto(payload, (self.bridge_ip, self.bridge_port))
+    def _publish_actual_joint_angles(self, present_pos: dict) -> None:
+        if not self._mqtt_client or not self._mqtt_connected.is_set():
+            return
+
+        message = {
+            "method": "set_actual_joint_angles",
+            "params": {"joints": {f"{k}.pos": v for k, v in present_pos.items()}},
+            "timestamp": time.time(),
+        }
+        self._mqtt_client.publish(self.mqtt_topic+"/follower", json.dumps(message), retain=False)
+
+    def _on_connect(self, client, userdata, flags, rc):
+        if rc == 0:
+            logger.info(
+                "Connected to MQTT broker at %s:%s",
+                self.mqtt_broker_ip,
+                self.mqtt_broker_port,
+            )
+            self._mqtt_connected.set()
+            client.subscribe(self.mqtt_topic+"/leader")
+            logger.info("Subscribed to topic: %s", self.mqtt_topic+"/leader")
+        else:
+            logger.error("Failed to connect to MQTT broker. Return code: %s", rc)
+            self._mqtt_connected.clear()
+
+    def _on_disconnect(self, client, userdata, rc):
+        self._mqtt_connected.clear()
+        logger.warning("Disconnected from MQTT broker. Return code: %s", rc)
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+        except Exception:
+            logger.warning("Invalid MQTT JSON payload on %s", msg.topic)
+            return
+
+        method = payload.get("method")
+        if method != "set_follower_joint_angles":
+            return
+
+        # Ignore out-of-order commands if timestamps are present
+        try:
+            ts = payload.get("timestamp")
+            cmd_ts = datetime.fromisoformat(ts) if ts else None
+        except Exception:
+            cmd_ts = None
+
+        with self._goal_pos_lock:
+            if cmd_ts is not None and self._last_cmd_timestamp is not None and cmd_ts <= self._last_cmd_timestamp:
+                return
+            self.set_goal_position(payload)
+            if cmd_ts is not None:
+                self._last_cmd_timestamp = cmd_ts
 
     def start(self, stop_event=None):
         try:
@@ -81,26 +134,37 @@ class Follower:
             self.follower.connect()
             logger.info("Follower arm connected")
 
-            # Create UDP follower_sock socket to receive instructions 
-            # and send servo positions to/from bridge
-            self.follower_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self.follower_sock.bind(('0.0.0.0', self.bridge_port))
-            self.follower_sock.settimeout(0)
+            # Connect to MQTT broker
+            self._mqtt_client = mqtt.Client()
+            self._mqtt_client.on_connect = self._on_connect
+            self._mqtt_client.on_disconnect = self._on_disconnect
+            self._mqtt_client.on_message = self._on_message
 
-            # Send initial servo positions to bridge for frontend display (if enabled)
+            logger.info(
+                "Connecting to MQTT broker at %s:%s...",
+                self.mqtt_broker_ip,
+                self.mqtt_broker_port,
+            )
+            self._mqtt_client.connect(self.mqtt_broker_ip, self.mqtt_broker_port, keepalive=60)
+            self._mqtt_client.loop_start()
+
+            if not self._mqtt_connected.wait(timeout=5):
+                logger.error("Failed to connect to MQTT broker within timeout")
+                return
+
+            # Send initial servo positions for frontend display (if enabled)
             try:
-                present_pos = self.follower.bus.sync_read("Present_Position")
+                with self._bus_lock:
+                    present_pos = self.follower.bus.sync_read("Present_Position")
             except Exception as e:
-                logger.error(f"Failed to sync read 'Present_Position': {e}")
+                logger.error("Failed to sync read 'Present_Position': %s", e)
                 present_pos = None
             if self.follower_feedback and present_pos is not None:
                 try:
-                    self._send_servo_udp(present_pos)
-                    logger.debug(f"Sent present_pos to bridge: {present_pos}")
+                    self._publish_actual_joint_angles(present_pos)
                 except Exception as e:
-                    logger.warning("Failed to send present_pos over UDP: %s", e)
+                    logger.warning("Failed to publish present_pos over MQTT: %s", e)
 
-            # last_sent_pos = present_pos.copy() if present_pos is not None else {}
             self.last_send_time = time.perf_counter()
 
             # Start set_joints loop in separate thread to continuously update follower arm position
@@ -109,130 +173,78 @@ class Follower:
             set_joints_thread.start()
             logger.debug("set_joints thread started")
 
-            last_msg_timestamp = None
             while stop_event is None or not stop_event.is_set():
                 now = time.perf_counter()
-                try:
-                    # Receive instructions from bridge via UDP
-                    data, addr = self.follower_sock.recvfrom(1024) # Recive 1024 bytes from bridge
-                    payload = json.loads(data.decode("utf-8"))
 
-                    # Process only set_follower_joint_angles method for controlling the follower arm
-                    method = payload.get("method")
-                    if method == "set_follower_joint_angles":
-                        # Only process if message has a newer timestamp than last due to UDP unreliability
-                        if payload.get("timestamp") and (last_msg_timestamp is None or datetime.fromisoformat(payload.get("timestamp")) > last_msg_timestamp):
-                            self.set_goal_position(payload)
-                            logger.debug(f"Updated goal_pos from bridge: {self.goal_pos}")
-                            last_msg_timestamp = datetime.fromisoformat(payload.get("timestamp", last_msg_timestamp))
-                            logger.debug(f"Last message timestamp updated to: {last_msg_timestamp}")
-                            self.last_send_time = now
-                        else:
-                            logger.debug(f"Ignoring out-of-order UDP message from bridge {addr} with timestamp {payload.get('timestamp')}")
-                except socket.error:
-                    # No data received, continue waiting
-                    pass
-                except Exception:
-                    logger.warning("Invalid UDP JSON payload from bridge %s", addr)
-
-                # Periodic send every 0.25s if not already sent due to leader update
-                if self.follower_feedback:
-                    if (now - self.last_send_time) >= self.idle_send_interval:
-                        try:
+                # Periodic publish (keepalive) for frontend display
+                if self.follower_feedback and (now - self.last_send_time) >= self.idle_send_interval:
+                    try:
+                        with self._bus_lock:
                             present_pos = self.follower.bus.sync_read("Present_Position")
+                    except Exception as e:
+                        logger.error("Failed to sync read 'Present_Position': %s", e)
+                        present_pos = None
+                    if present_pos is not None:
+                        try:
+                            self._publish_actual_joint_angles(present_pos)
                         except Exception as e:
-                            logger.error(f"Failed to sync read 'Present_Position': {e}")
-                            present_pos = None
-                        if present_pos is not None:
-                            try:
-                                self._send_servo_udp(present_pos)
-                                #logger.debug(f"Sent present_pos to bridge (periodic): {present_pos}")
-                            except Exception as e:
-                                logger.warning("Failed to send present_pos over UDP: %s", e)
-                            self.last_send_time = now
+                            logger.warning("Failed to publish present_pos over MQTT: %s", e)
+                        self.last_send_time = now
+
+                time.sleep(0.01)
         except Exception as e:
-            logger.exception(f"Error in UDP socket: {e}")
+            logger.exception("Error in follower loop: %s", e)
+        finally:
+            try:
+                if self._mqtt_client is not None:
+                    self._mqtt_client.loop_stop()
+                    self._mqtt_client.disconnect()
+            except Exception:
+                pass
 
     def set_goal_position(self, payload):
         # Extract joint angles from payload
         joints = payload.get("params", {}).get("joints", {})
 
         # Extract leader arm positions (remove .pos suffix)
-        self.goal_pos = {
-            key.removesuffix(".pos"): val
-            for key, val in joints.items()
-            if key.endswith(".pos")
-        }
+        self.goal_pos = {key.removesuffix(".pos"): val for key, val in joints.items() if key.endswith(".pos")}
 
     def set_joints(self, stop_event=None):
-        while (stop_event is None or not stop_event.is_set()):
-            #logger.debug(f"set_joints loop iteration with goal_pos: {self.goal_pos}")
-            min_step = 2.0  # degrees, minimum step for smoothness
-            max_step = self.max_relative_target # degrees, maximum step for responsiveness
-            k = 0.5         # scaling factor for adaptive step
-            if not self.goal_pos:
-                time.sleep(0.05)
+        loop_time = 1.0 / float(self.control_fps)
+        while stop_event is None or not stop_event.is_set():
+            loop_start = time.perf_counter()
+            with self._goal_pos_lock:
+                goal_pos = dict(self.goal_pos)
+
+            if not goal_pos:
+                time.sleep(min(0.05, loop_time))
                 continue
 
-            # Read current servo positions
+            action = {f"{motor}.pos": val for motor, val in goal_pos.items()}
             try:
-                present_pos = self.follower.bus.sync_read("Present_Position")
+                with self._bus_lock:
+                    self.follower.send_action(action)
             except Exception as e:
-                logger.error(f"Failed to sync read 'Present_Position': {e}")
-                present_pos = None
-                continue
+                # Don't crash the thread if the bus glitches; just back off and retry.
+                logger.warning("send_action failed (will retry): %s", e)
+                time.sleep(0.1)
 
-            if present_pos == self.goal_pos:
-                # Current position matches goal, no need to send commands - sleep briefly and check again
-                time.sleep(0.05)
-                continue
-
-            # Send current positions to bridge for frontend display (if enabled)
-            if self.follower_feedback and present_pos is not None:
-                try:
-                    self._send_servo_udp(present_pos)
-                    self.last_send_time = time.perf_counter()
-                    #logger.debug(f"Sent present_pos to bridge: {present_pos}")
-                except Exception as e:
-                    logger.warning("Failed to send present_pos over UDP: %s", e)
-
-            # Calculate adaptive step sizes based on distance to goal for each joint
-            adaptive_steps = {}
-            for key, g_pos in self.goal_pos.items():
-                c_pos = present_pos.get(key, g_pos)
-                diff = abs(g_pos - c_pos)
-                step = min(max(k * diff, min_step), max_step)
-                adaptive_steps[key] = step
-
-            # Build per-joint safe goal positions
-            safe_goal_pos = {}
-            for key, g_pos in self.goal_pos.items():
-                c_pos = present_pos.get(key, g_pos)
-                # Clamp the movement to the adaptive step
-                if abs(g_pos - c_pos) > adaptive_steps[key]:
-                    direction = 1 if g_pos > c_pos else -1
-                    safe_goal_pos[key] = c_pos + direction * adaptive_steps[key]
-                else:
-                    safe_goal_pos[key] = g_pos
-
-            # Send safe goal position to follower
-            # logger.debug(f"Sending safe_goal_pos to follower: { {f'{motor}.pos': val for motor, val in safe_goal_pos.items()} }")
-            self.follower.bus.sync_write("Goal_Position", safe_goal_pos)
-
-            # Sleep to avoid overwhelming the bus
-            time.sleep(0.05)
+            # Sleep to maintain control rate.
+            elapsed = time.perf_counter() - loop_start
+            sleep_time = max(0.0, loop_time - elapsed)
+            time.sleep(sleep_time)
 
 
 class CameraStreamer:
     """
     Optional GStreamer-based camera streamer that captures video from a V4L2 device,
-    encodes it as H.264, and sends it via UDP to the bridge for frontend display.
+    encodes it as H.264, and sends it via UDP for frontend display.
     """
 
-    def __init__(self, camera_device: str, camera_resolution: str, bridge_ip: str = "192.168.1.107", follower_camera_port: int = 5000):
+    def __init__(self, camera_device: str, camera_resolution: str, video_host: str = "192.168.1.107", follower_camera_port: int = 5000):
         self.camera_device = camera_device
         self.camera_resolution = camera_resolution
-        self.bridge_ip = bridge_ip
+        self.video_host = video_host
         self.follower_camera_port = follower_camera_port
 
     def start(self, stop_event=None):
@@ -252,7 +264,7 @@ class CameraStreamer:
                 'bframes=0',
                 'byte-stream=true',
             '!', 'rtph264pay', 'pt=96', 'config-interval=1', 'mtu=1200',
-            '!', 'udpsink', f'host={self.bridge_ip}', f'port={self.follower_camera_port}',
+            '!', 'udpsink', f'host={self.video_host}', f'port={self.follower_camera_port}',
                 'sync=false', 'async=false'
         ]
 
@@ -284,16 +296,20 @@ def parse_args():
     p = argparse.ArgumentParser(description="SO-ARM101 follower")
     p.add_argument("--follower-port", default="/dev/ttyACM0")
     p.add_argument("--follower-id", default="so_follower")
-    p.add_argument("--bridge-ip", default="192.168.1.107")
-    p.add_argument("--bridge-port", type=int, default=9000)
+    p.add_argument("--mqtt-broker-ip", default="192.168.1.107")
+    p.add_argument("--mqtt-broker-port", type=int, default=1883)
+    p.add_argument("--mqtt-topic", default="watchman_robotarm/so-101")
     p.add_argument("--max-relative-target", type=float, default=20.0)
+    p.add_argument("--control-fps", type=int, default=30)
     p.add_argument("--idle-send-interval", type=float, default=0.25)
 
     # Optional camera
     p.add_argument("--camera", dest="camera_device", default=None,
                    help="Enable ustreamer and use this V4L2 device, e.g. /dev/video0")
     p.add_argument("--cam-res", dest="camera_resolution", default="640x480")
-
+    p.add_argument("--video-host",dest="video_host",default=None,
+        help="Host to send UDP video stream to (defaults to --mqtt-broker-ip)",
+    )
     return p.parse_args()
 
 def main():
@@ -302,9 +318,11 @@ def main():
     follower = Follower(
         follower_port=args.follower_port,
         follower_id=args.follower_id,
-        bridge_ip=args.bridge_ip,
-        bridge_port=args.bridge_port,
+        mqtt_broker_ip=args.mqtt_broker_ip,
+        mqtt_broker_port=args.mqtt_broker_port,
+        mqtt_topic=args.mqtt_topic,
         max_relative_target=args.max_relative_target,
+        control_fps=args.control_fps,
         idle_send_interval=args.idle_send_interval,
     )
 
@@ -320,7 +338,7 @@ def main():
         camera_streamer = CameraStreamer(
             camera_device=args.camera_device,
             camera_resolution=args.camera_resolution,
-            bridge_ip=args.bridge_ip,
+            video_host=(args.video_host or args.mqtt_broker_ip),
             follower_camera_port=5000,
         )
         camera_streamer_thread = threading.Thread(

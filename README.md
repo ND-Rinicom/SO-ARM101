@@ -1,6 +1,6 @@
 # SO-101 DIGITAL TWIN 
 
-![Photo of SO-101 Digital Twin Project](image.png)
+![Photo of SO-101 Digital Twin Project](docs/img/Project%20Image.png)
 
 This Project was designed over my 4th year student workplacment with Rinicom. If you have any questions about the project that are not answered bellow feel free to reach out to me on my personal email nialldorrington@btinternet.com.
 
@@ -24,14 +24,29 @@ For a detailed break down on how to use all the systems functionality, once you'
 
 ## Project Discription and System Justifications
 
-Now that you have the system up and running and hopfully inderstand how to use it below I will go into more detail about the codebase. This will hopefuly provide a more technical discription of system choices, helping with a future development or potential magpying for future projects.
+Now that you have the system up and running and hopfully understand how to use it below I will go into more detail about the codebase. This will hopefuly provide a more technical discription of system choices, helping with a future development or potential magpying for future projects.
 
 The code base is broken down into:
 - front-end: HTML & JS for the web digital twin 
 - lerobot: Code taken from the OpenSource Lerobot git https://github.com/huggingface/lerobot
 - scripts: Custom Python scripts for the SO-101 Leader & Follower & Cammera that run on the Pi and host device
 
-The current systems follower will handle dropped packets by moving in safe increments towards the last recived leader position and periodicaly sending arm states while idle.
+Here's a diargram showing the data flows (This might cause more confussion, I prommise its not as complicated as it looks)
+
+![DrawIO Diagram of project flow](docs/img/SO-101-Digital-Twin-Diagram.png)
+
+### Features
+
+- Calabration insures that the follower arm will not attempt to move past servo limits avoiding damage.
+
+- The current systems follower will handle dropped packets by moving in safe increments towards the last recived leader position and periodicaly sending arm states while idle.
+
+- When a MQTT request is stale for either leader or follower (last send was over 5 secconds ago), the relevant digital twin will go red. Indicating to the user an error/inacurate current display.
+
+- In cases of low bandwidth RTP video packets are dropped over servo instructions and feedback. 
+
+- After monitoring using the /scripts/monitor_udp.py, for 15 minutes of constant leader arm movement updates to the follower, the total avarage Kbps was 768.43 
+
 
 ## SO-101 Robot Arm Details and Maintenance 
 

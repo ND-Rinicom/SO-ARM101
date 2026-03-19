@@ -58,12 +58,10 @@ All messages use JSON-RPC 2.0 format:
 
 ```json
 {
-  "jsonrpc": "2.0",
   "id": "unique-message-id",
   "method": "set_follower_joint_angles",
   "timestamp": "2026-01-14T15:27:05Z",
   "params": {
-    "units": "degrees",
     "joints": {
       "shoulder_pan.pos": 0,
       "shoulder_lift.pos": 0,

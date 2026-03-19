@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 class LeaderMQTTSender:
     """
-    Reads positions from leader arm and sends them via MQTT to bridge and front-end.
+    Reads positions from leader arm and sends them via MQTT to front-end and follower.py.
     Simple pass-through - all safety logic is on the follower side.
     """
     
@@ -138,12 +138,10 @@ class LeaderMQTTSender:
                 if self.is_connected and should_send:
                     # Format as JSON-RPC message
                     message = {
-                        "jsonrpc": "2.0",
                         "id": str(uuid.uuid4()),
                         "method": "set_follower_joint_angles",
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "params": {
-                            "units": "degrees",
                             "joints": action
                         }
                     }
