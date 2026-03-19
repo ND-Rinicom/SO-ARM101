@@ -8,9 +8,67 @@ source ./lerobot-venv/bin/activate
 ```
 
 ### 2. Install Dependencies
-On both PC and Raspberry Pi (with venv activated):
+
+#### Both PC & Pi (with venv activated)
 ```bash
-pip install paho-mqtt feetech-servo-sdk pyserial numpy
+pip install paho-mqtt pyserial numpy feetech-servo-sdk
+```
+
+#### Pi (Follower PC) dependencies
+Debian/Ubuntu/Raspberry Pi OS:
+```bash
+sudo apt update
+sudo apt install -y \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav
+```
+
+Fedora:
+```bash
+sudo dnf install -y \
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugins-ugly \
+    gstreamer1-libav
+```
+
+#### PC dependencies
+
+System packages (required for `scripts/rtp_to_rtsp_streamer.py`):
+
+Debian/Ubuntu:
+```bash
+sudo apt update
+sudo apt install -y \
+    python3-gi \
+    gir1.2-gstreamer-1.0 \
+    gir1.2-gst-plugins-base-1.0 \
+    gir1.2-gst-rtsp-server-1.0 \
+    gstreamer1.0-tools \
+    gstreamer1.0-plugins-base \
+    gstreamer1.0-plugins-good \
+    gstreamer1.0-plugins-bad \
+    gstreamer1.0-plugins-ugly \
+    gstreamer1.0-libav
+```
+
+Fedora:
+```bash
+sudo dnf install -y \
+    python3-gobject \
+    gstreamer1-rtsp-server \
+    gstreamer1 \
+    gstreamer1-plugins-base \
+    gstreamer1-plugins-good \
+    gstreamer1-plugins-bad-free \
+    gstreamer1-plugins-ugly \
+    gstreamer1-libav
 ```
 
 ### 3. Transfer to Raspberry Pi
@@ -33,6 +91,9 @@ Unplug the camera, run `ls /dev/video*`, then plug it back in and run the comman
 You need calibration files for both leader and follower. Calibration files are stored within `/lerobot/calibrations`.
 
 There should already be calibrations set up in this directory however if there isn't you can set your own buy running the following on their respective machines:
+
+NOTE: make sure you start the calibration with the arm at its middle points for all joints including wrist roll. Like so ![Follower arm calibtaion start position](img/SO-101-Calibration-Start-Position.png)
+
 ```bash
 # On Follower Pi (connected to follower arm)
 python -c "from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig; \
@@ -131,7 +192,7 @@ Otherwise create a stream of your web front end via the correct URL, and add any
 e.g. http://0.0.0.0/index.html?#follower=0&leaderColor=0xFF6984 for a pink leader digital twin.
 
 
-### 9. Set UDP priorities (optional)
+### 9. Set Port priorities (optional)
 
 If wanting communication from the laptop (leader) to pi (follower) via UDP its a good idea to set the servo comunications as higher priority than the video stream as video packets droping is much better.
 
