@@ -142,6 +142,9 @@ index.html#?leader=0&followerColor=0xff69b4 # Pink follower arm only
 You should see:
 Robot arm model updating to match leader/follower joint data
 
+#### Three.js cam controls
+For a detailed guide on how to move the camera around the digital twins please see [Front-end-camera-guide.md](Front-end-camera-guide.md).
+
 ### 6. Control!
 
 Hopefully now if set up correctly you should be able to see the digital twins of both follower and leader react when leader is controlled.
